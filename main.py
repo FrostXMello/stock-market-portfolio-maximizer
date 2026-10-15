@@ -1,419 +1,489 @@
-"""
-Stock Market Investment Portfolio Maximizer
-==========================================
-A Design and Analysis of Algorithms (DAA) demonstration that allocates a
-fixed capital budget across mock stock assets using two classic knapsack
-approaches:
-
-  Algorithm A — Greedy Fractional Knapsack
-      Allows buying fractional shares. Assets are sorted by expected profit
-      per unit of cost and capital is allocated greedily. Time O(n log n),
-      auxiliary space O(n).
-
-  Algorithm B — 0/1 Knapsack Dynamic Programming
-      Allows whole shares only. A bottom-up one-dimensional DP table finds
-      the maximum expected profit without reconstructing the portfolio.
-      Time O(nW), auxiliary space O(W), where W is the integer-scaled budget.
-
-Important notes
----------------
-* Synthetic data is for teaching algorithms only — it is NOT real market
-  prediction or investment advice.
-* The two algorithms solve different problem variants (fractional vs 0/1),
-  so their reported profits are NOT directly comparable under identical
-  constraints.
-"""
-
-from __future__ import annotations
-
+import json
 import random
 import time
-from typing import Dict, List, Tuple
+from flask import Flask, jsonify, request, render_template_string
 
-import matplotlib
+app = Flask(__name__)
 
-# Prefer a non-interactive backend so headless runs never hang on display.
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402  (must follow matplotlib.use)
+RF = 0.02
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-RISK_FREE_RATE = 0.02          # annual risk-free rate used in Sharpe ratio
-RANDOM_SEED = 42               # fixed seed for reproducible mock data
-BUDGET = 10_000.0              # fixed capital budget for every benchmark
-BENCHMARK_RUNS = 5             # number of timed runs averaged per size
-DATASET_SIZES = (10, 50, 100, 500)
-GRAPH_FILENAME = "portfolio_runtime_comparison.png"
-
-
-# ---------------------------------------------------------------------------
-# 1. Stock Data Generation
-# ---------------------------------------------------------------------------
-def generate_stock_assets(num_stocks: int, seed: int = RANDOM_SEED) -> List[Dict]:
-    """
-    Generate a list of mock stock assets with reproducible random values.
-
-    Each asset dictionary contains:
-        ticker, cost, expected_return_rate, volatility, sharpe_ratio,
-        expected_profit  (cost × expected_return_rate)
-
-    Parameters
-    ----------
-    num_stocks : int
-        Number of assets to create. Must be a positive integer.
-    seed : int
-        Random seed so results are reproducible across runs.
-
-    Returns
-    -------
-    list of dict
-        Mock stock assets ready for the knapsack algorithms.
-    """
-    if not isinstance(num_stocks, int) or num_stocks <= 0:
-        raise ValueError("num_stocks must be a positive integer.")
-
+def make_stocks(n, seed=42):
+    if n < 1:
+        raise ValueError("need at least 1 stock")
     rng = random.Random(seed)
-    assets: List[Dict] = []
-
-    for i in range(num_stocks):
-        ticker = f"STK{i + 1:03d}"
-        # Share price between $10 and $250
-        cost = round(rng.uniform(10.0, 250.0), 2)
-        # Expected return rate between 2% and 25%
-        expected_return_rate = round(rng.uniform(0.02, 0.25), 4)
-        # Volatility between 5% and 40% (never zero — avoids division by zero)
-        volatility = round(rng.uniform(0.05, 0.40), 4)
-
-        sharpe_ratio = (expected_return_rate - RISK_FREE_RATE) / volatility
-        expected_profit = cost * expected_return_rate
-
-        assets.append(
-            {
-                "ticker": ticker,
-                "cost": cost,
-                "expected_return_rate": expected_return_rate,
-                "volatility": volatility,
-                "sharpe_ratio": round(sharpe_ratio, 4),
-                "expected_profit": round(expected_profit, 4),
-            }
-        )
-
-    return assets
+    out = []
+    for i in range(n):
+        price = round(rng.uniform(12, 220), 2)
+        er = round(rng.uniform(0.03, 0.22), 4)
+        vol = round(rng.uniform(0.06, 0.38), 4)
+        profit = round(price * er, 4)
+        sharpe = round((er - RF) / vol, 4)
+        out.append({
+            "ticker": f"STK{i+1:03d}",
+            "cost": price,
+            "ret": er,
+            "vol": vol,
+            "sharpe": sharpe,
+            "profit": profit,
+        })
+    return out
 
 
-# ---------------------------------------------------------------------------
-# 2. Algorithm A: Greedy Fractional Knapsack
-# ---------------------------------------------------------------------------
-def greedy_fractional_knapsack(assets: List[Dict], budget: float) -> float:
-    """
-    Maximize expected profit allowing fractional shares (fractional knapsack).
-
-    Strategy
-    --------
-    1. Sort assets by expected profit per unit of cost (descending).
-    2. Buy as much of each asset as the remaining budget allows.
-    3. Stop when the budget is exhausted.
-
-    Complexity
-    ----------
-    Time     : O(n log n)  — dominated by sorting
-    Aux space: O(n)        — sorted copy of the asset list
-
-    Parameters
-    ----------
-    assets : list of dict
-        Stock assets with 'cost' and 'expected_profit' fields.
-    budget : float
-        Available capital. Must be non-negative.
-
-    Returns
-    -------
-    float
-        Maximum expected profit under the fractional-share model.
-    """
-    if budget < 0:
-        raise ValueError("budget must be non-negative.")
-    if not assets:
-        return 0.0
-
-    # Sort by profit density (expected profit / cost), highest first.
-    # O(n log n) time; the sorted list uses O(n) auxiliary space.
-    sorted_assets = sorted(
-        assets,
-        key=lambda a: a["expected_profit"] / a["cost"],
-        reverse=True,
-    )
-
-    remaining = budget
-    total_profit = 0.0
-
-    for asset in sorted_assets:
-        cost = asset["cost"]
-        profit = asset["expected_profit"]
-
-        if remaining <= 0:
+def greedy_pick(stocks, budget):
+    # fractional knapsack — sort by profit per dollar
+    ranked = sorted(stocks, key=lambda s: s["profit"] / s["cost"], reverse=True)
+    left = budget
+    total = 0.0
+    picks = []
+    for s in ranked:
+        if left <= 0:
             break
-
-        if cost <= remaining:
-            # Buy one full share
-            total_profit += profit
-            remaining -= cost
+        if s["cost"] <= left:
+            total += s["profit"]
+            left -= s["cost"]
+            picks.append({**s, "qty": 1.0, "got": s["profit"]})
         else:
-            # Buy a fraction of one share with whatever capital is left
-            fraction = remaining / cost
-            total_profit += profit * fraction
-            remaining = 0.0
+            frac = left / s["cost"]
+            got = s["profit"] * frac
+            total += got
+            picks.append({**s, "qty": round(frac, 4), "got": round(got, 4)})
+            left = 0
+    return total, picks
 
-    return total_profit
 
-
-# ---------------------------------------------------------------------------
-# 3. Algorithm B: 0/1 Knapsack DP (1-D, O(W) auxiliary space)
-# ---------------------------------------------------------------------------
-def zero_one_knapsack_dp(assets: List[Dict], budget: float) -> float:
-    """
-    Maximize expected profit with whole shares only (0/1 knapsack).
-
-    Uses a classic bottom-up DP with a single one-dimensional array so that
-    auxiliary space is O(W), where W is the integer-scaled budget.
-    Capacities are iterated in descending order so each asset is used at
-    most once. Portfolio reconstruction is intentionally omitted; only the
-    maximum expected profit is returned.
-
-    Complexity
-    ----------
-    Time     : O(nW)
-    Aux space: O(W)   — single DP array of length W+1
-
-    Parameters
-    ----------
-    assets : list of dict
-        Stock assets with 'cost' and 'expected_profit' fields.
-    budget : float
-        Available capital. Must be non-negative.
-
-    Returns
-    -------
-    float
-        Maximum expected profit under the whole-share (0/1) model.
-    """
-    if budget < 0:
-        raise ValueError("budget must be non-negative.")
-    if not assets:
-        return 0.0
-
-    # Scale dollars to cents so weights are integers (W = integer budget).
+def dp_pick(stocks, budget):
+    # 0/1 knapsack, 1d dp, whole shares only
     scale = 100
     W = int(budget * scale)
-
-    # One-dimensional DP array — auxiliary space O(W).
-    # dp[w] = best expected profit achievable with capacity w (in cents).
     dp = [0.0] * (W + 1)
-
-    for asset in assets:
-        weight = int(round(asset["cost"] * scale))
-        value = asset["expected_profit"]
-
-        if weight <= 0 or weight > W:
+    for s in stocks:
+        w = int(round(s["cost"] * scale))
+        v = s["profit"]
+        if w <= 0 or w > W:
             continue
-
-        # Descend so this asset is considered at most once (0/1).
-        for w in range(W, weight - 1, -1):
-            candidate = dp[w - weight] + value
-            if candidate > dp[w]:
-                dp[w] = candidate
-
+        for cap in range(W, w - 1, -1):
+            cand = dp[cap - w] + v
+            if cand > dp[cap]:
+                dp[cap] = cand
     return dp[W]
 
 
-# ---------------------------------------------------------------------------
-# 4. Benchmarking
-# ---------------------------------------------------------------------------
-def measure_average_runtime_ms(
-    func,
-    assets: List[Dict],
-    budget: float,
-    runs: int = BENCHMARK_RUNS,
-) -> Tuple[float, float]:
-    """
-    Time a knapsack function over several runs and return (avg_ms, profit).
-
-    Uses time.perf_counter() for high-resolution wall-clock timing.
-    The profit returned is from the last run (deterministic for fixed seed).
-    """
-    if runs <= 0:
-        raise ValueError("runs must be a positive integer.")
-
-    total_seconds = 0.0
-    profit = 0.0
-
+def timed(fn, *args, runs=3):
+    last = None
+    t0 = time.perf_counter()
     for _ in range(runs):
-        start = time.perf_counter()
-        profit = func(assets, budget)
-        end = time.perf_counter()
-        total_seconds += end - start
-
-    avg_ms = (total_seconds / runs) * 1000.0
-    return avg_ms, profit
+        last = fn(*args)
+    ms = (time.perf_counter() - t0) / runs * 1000
+    return ms, last
 
 
-def run_benchmarks(
-    sizes: Tuple[int, ...] = DATASET_SIZES,
-    budget: float = BUDGET,
-    runs: int = BENCHMARK_RUNS,
-) -> List[Dict]:
-    """
-    Benchmark both algorithms on each dataset size with the same budget.
+PAGE = r"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Portfolio Maximizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1410;
+    --panel: #1a221c;
+    --line: #2d3b32;
+    --text: #e8efe6;
+    --muted: #9aab9c;
+    --accent: #d4a54a;
+    --green: #5fbf7a;
+    --blue: #6ea8d8;
+    --danger: #e07a5f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #243028 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #2a2418 0%, transparent 50%),
+      var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { margin-bottom: 22px; }
+  header h1 {
+    font-family: Fraunces, Georgia, serif;
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    margin: 0 0 8px;
+    letter-spacing: -0.02em;
+  }
+  header p { margin: 0; color: var(--muted); max-width: 62ch; line-height: 1.5; }
+  .grid {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: color-mix(in srgb, var(--panel) 92%, black);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  label { display: block; font-size: 0.82rem; color: var(--muted); margin: 12px 0 6px; }
+  input, select {
+    width: 100%;
+    background: #101612;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+  }
+  button {
+    width: 100%;
+    margin-top: 18px;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    background: linear-gradient(180deg, #e0b45a, var(--accent));
+    color: #1a1408;
+  }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  .note {
+    margin-top: 14px;
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 800px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    background: #141b16;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .stat span { display: block; color: var(--muted); font-size: 0.75rem; }
+  .stat strong { font-size: 1.15rem; margin-top: 4px; display: block; }
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
+  .chart-box h3 {
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  canvas { width: 100% !important; max-height: 280px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 14px;
+    font-size: 0.85rem;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 6px;
+    text-align: right;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    background: #243028;
+    color: var(--green);
+    border: 1px solid #355241;
+  }
+  .err { color: var(--danger); margin-top: 10px; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Portfolio Maximizer</h1>
+      <p>
+        Fake market data + two knapsack solvers. Greedy can take fractional shares;
+        DP sticks to whole shares. Same budget, different rules — so profits aren’t a clean apples-to-apples score.
+      </p>
+    </header>
 
-    Both algorithms receive the identical generated dataset and the same
-    fixed capital budget for a fair runtime comparison. Reported profits
-    still solve different variants (fractional vs 0/1) and are therefore
-    not necessarily directly comparable.
-    """
-    results: List[Dict] = []
+    <div class="grid">
+      <aside class="panel">
+        <div class="pill">localhost demo</div>
+        <label>Budget ($)</label>
+        <input id="budget" type="number" value="10000" min="100" step="100"/>
+        <label>Stocks in market view</label>
+        <input id="nview" type="number" value="40" min="5" max="200"/>
+        <label>Seed</label>
+        <input id="seed" type="number" value="42"/>
+        <label>Benchmark sizes (comma sep)</label>
+        <input id="sizes" type="text" value="10, 30, 60, 100"/>
+        <label>Timing runs</label>
+        <input id="runs" type="number" value="2" min="1" max="8"/>
+        <button id="go">Run analysis</button>
+        <p class="note">
+          Tip: DP gets heavy with huge budgets (it scales with budget × n).
+          Keep sizes modest if you want snappy charts.
+        </p>
+        <div id="err" class="err"></div>
+      </aside>
 
+      <main>
+        <div class="stats" id="stats">
+          <div class="stat"><span>Greedy profit</span><strong>—</strong></div>
+          <div class="stat"><span>DP profit</span><strong>—</strong></div>
+          <div class="stat"><span>Greedy last (ms)</span><strong>—</strong></div>
+          <div class="stat"><span>DP last (ms)</span><strong>—</strong></div>
+        </div>
+
+        <div class="charts">
+          <div class="panel chart-box">
+            <h3>Runtime vs dataset size</h3>
+            <canvas id="runtimeChart"></canvas>
+          </div>
+          <div class="panel chart-box">
+            <h3>Expected profit (same run)</h3>
+            <canvas id="profitChart"></canvas>
+          </div>
+          <div class="panel chart-box">
+            <h3>Return vs volatility</h3>
+            <canvas id="scatterChart"></canvas>
+          </div>
+          <div class="panel chart-box">
+            <h3>Top greedy allocations</h3>
+            <canvas id="allocChart"></canvas>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+          <h3 style="margin:0 0 6px;font-size:0.95rem">Benchmark table</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>n</th><th>Greedy ms</th><th>Greedy $</th><th>DP ms</th><th>DP $</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  </div>
+
+<script>
+const colors = {
+  gold: "#d4a54a",
+  green: "#5fbf7a",
+  blue: "#6ea8d8",
+  soft: "rgba(212,165,74,0.25)",
+};
+
+let runtimeChart, profitChart, scatterChart, allocChart;
+
+function money(x) {
+  return "$" + Number(x).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+
+function mkCharts() {
+  const common = {
+    responsive: true,
+    plugins: { legend: { labels: { color: "#c9d4ca" } } },
+    scales: {
+      x: { ticks: { color: "#9aab9c" }, grid: { color: "rgba(45,59,50,0.6)" } },
+      y: { ticks: { color: "#9aab9c" }, grid: { color: "rgba(45,59,50,0.6)" } },
+    },
+  };
+
+  runtimeChart = new Chart(document.getElementById("runtimeChart"), {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label: "Greedy", data: [], borderColor: colors.gold, backgroundColor: colors.soft, tension: 0.25, fill: true, pointRadius: 4 },
+      { label: "0/1 DP", data: [], borderColor: colors.blue, tension: 0.25, pointRadius: 4 },
+    ]},
+    options: { ...common, scales: { ...common.scales, y: { ...common.scales.y, title: { display: true, text: "ms", color: "#9aab9c" } } } },
+  });
+
+  profitChart = new Chart(document.getElementById("profitChart"), {
+    type: "bar",
+    data: { labels: [], datasets: [
+      { label: "Greedy", data: [], backgroundColor: colors.gold },
+      { label: "DP", data: [], backgroundColor: colors.blue },
+    ]},
+    options: common,
+  });
+
+  scatterChart = new Chart(document.getElementById("scatterChart"), {
+    type: "scatter",
+    data: { datasets: [{
+      label: "stocks",
+      data: [],
+      backgroundColor: "rgba(95,191,122,0.75)",
+      pointRadius: 5,
+    }]},
+    options: {
+      ...common,
+      scales: {
+        x: { ...common.scales.x, title: { display: true, text: "volatility", color: "#9aab9c" } },
+        y: { ...common.scales.y, title: { display: true, text: "expected return", color: "#9aab9c" } },
+      },
+    },
+  });
+
+  allocChart = new Chart(document.getElementById("allocChart"), {
+    type: "doughnut",
+    data: { labels: [], datasets: [{ data: [], backgroundColor: ["#d4a54a","#5fbf7a","#6ea8d8","#e07a5f","#a78bfa","#34d399","#f59e0b","#60a5fa"] }] },
+    options: { plugins: { legend: { position: "bottom", labels: { color: "#c9d4ca", boxWidth: 12 } } } },
+  });
+}
+
+function paint(data) {
+  const rows = data.bench;
+  const last = rows[rows.length - 1];
+
+  const stats = document.getElementById("stats");
+  stats.innerHTML = `
+    <div class="stat"><span>Greedy profit</span><strong>${money(last.greedy_profit)}</strong></div>
+    <div class="stat"><span>DP profit</span><strong>${money(last.dp_profit)}</strong></div>
+    <div class="stat"><span>Greedy last (ms)</span><strong>${last.greedy_ms.toFixed(3)}</strong></div>
+    <div class="stat"><span>DP last (ms)</span><strong>${last.dp_ms.toFixed(2)}</strong></div>
+  `;
+
+  runtimeChart.data.labels = rows.map(r => r.n);
+  runtimeChart.data.datasets[0].data = rows.map(r => r.greedy_ms);
+  runtimeChart.data.datasets[1].data = rows.map(r => r.dp_ms);
+  runtimeChart.update();
+
+  profitChart.data.labels = rows.map(r => "n=" + r.n);
+  profitChart.data.datasets[0].data = rows.map(r => r.greedy_profit);
+  profitChart.data.datasets[1].data = rows.map(r => r.dp_profit);
+  profitChart.update();
+
+  scatterChart.data.datasets[0].data = data.market.map(s => ({ x: s.vol, y: s.ret }));
+  scatterChart.update();
+
+  const top = data.alloc.slice(0, 8);
+  allocChart.data.labels = top.map(s => s.ticker);
+  allocChart.data.datasets[0].data = top.map(s => s.got);
+  allocChart.update();
+
+  document.getElementById("tbody").innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.n}</td>
+      <td>${r.greedy_ms.toFixed(4)}</td>
+      <td>${r.greedy_profit.toFixed(2)}</td>
+      <td>${r.dp_ms.toFixed(4)}</td>
+      <td>${r.dp_profit.toFixed(2)}</td>
+    </tr>
+  `).join("");
+}
+
+async function run() {
+  const btn = document.getElementById("go");
+  const err = document.getElementById("err");
+  err.textContent = "";
+  btn.disabled = true;
+  btn.textContent = "Working…";
+  try {
+    const body = {
+      budget: Number(document.getElementById("budget").value),
+      nview: Number(document.getElementById("nview").value),
+      seed: Number(document.getElementById("seed").value),
+      sizes: document.getElementById("sizes").value,
+      runs: Number(document.getElementById("runs").value),
+    };
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "request failed");
+    paint(data);
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run analysis";
+  }
+}
+
+mkCharts();
+document.getElementById("go").onclick = run;
+run();
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/")
+def home():
+    return render_template_string(PAGE)
+
+
+@app.post("/api/analyze")
+def analyze():
+    data = request.get_json(force=True) or {}
+    try:
+        budget = float(data.get("budget", 10000))
+        nview = int(data.get("nview", 40))
+        seed = int(data.get("seed", 42))
+        runs = int(data.get("runs", 2))
+        sizes_raw = str(data.get("sizes", "10,30,60,100"))
+        sizes = [int(x.strip()) for x in sizes_raw.split(",") if x.strip()]
+    except Exception:
+        return jsonify({"error": "bad inputs"}), 400
+
+    if budget <= 0 or nview < 1 or runs < 1 or not sizes:
+        return jsonify({"error": "budget/n/runs/sizes look off"}), 400
+    if max(sizes) > 500:
+        return jsonify({"error": "keep sizes <= 500 for this demo"}), 400
+
+    market = make_stocks(nview, seed)
+    g_profit, alloc = greedy_pick(market, budget)
+
+    bench = []
     for n in sizes:
-        assets = generate_stock_assets(n)
+        stocks = make_stocks(n, seed)
+        g_ms, g_res = timed(lambda s=stocks: greedy_pick(s, budget)[0], runs=runs)
+        d_ms, d_res = timed(lambda s=stocks: dp_pick(s, budget), runs=runs)
+        # greedy_pick via timed returns profit only from lambda
+        bench.append({
+            "n": n,
+            "greedy_ms": round(g_ms, 4),
+            "greedy_profit": round(g_res, 4),
+            "dp_ms": round(d_ms, 4),
+            "dp_profit": round(d_res, 4),
+        })
 
-        greedy_ms, greedy_profit = measure_average_runtime_ms(
-            greedy_fractional_knapsack, assets, budget, runs
-        )
-        dp_ms, dp_profit = measure_average_runtime_ms(
-            zero_one_knapsack_dp, assets, budget, runs
-        )
-
-        results.append(
-            {
-                "n": n,
-                "greedy_ms": greedy_ms,
-                "greedy_profit": greedy_profit,
-                "dp_ms": dp_ms,
-                "dp_profit": dp_profit,
-            }
-        )
-
-    return results
-
-
-def print_results_table(results: List[Dict]) -> None:
-    """Print a neat terminal table of benchmark results."""
-    header = (
-        f"{'Dataset Size':>12} | "
-        f"{'Greedy (ms)':>12} | "
-        f"{'Greedy Profit':>14} | "
-        f"{'DP (ms)':>12} | "
-        f"{'DP Profit':>14}"
-    )
-    separator = "-" * len(header)
-
-    print()
-    print("Benchmark Results")
-    print("(Same dataset + same budget for both algorithms per row.)")
-    print(
-        "Note: Greedy allows fractional shares; DP allows whole shares only."
-    )
-    print(
-        "Profits solve different variants and are NOT necessarily directly comparable."
-    )
-    print(separator)
-    print(header)
-    print(separator)
-
-    for row in results:
-        print(
-            f"{row['n']:>12} | "
-            f"{row['greedy_ms']:>12.4f} | "
-            f"{row['greedy_profit']:>14.2f} | "
-            f"{row['dp_ms']:>12.4f} | "
-            f"{row['dp_profit']:>14.2f}"
-        )
-
-    print(separator)
-
-
-# ---------------------------------------------------------------------------
-# 5. Graph: runtime vs dataset size
-# ---------------------------------------------------------------------------
-def plot_runtime_comparison(results: List[Dict], filename: str = GRAPH_FILENAME) -> None:
-    """
-    Draw and save a line graph of average runtime vs dataset size.
-
-    Saves to disk first (required for headless environments), then attempts
-    plt.show(). With the Agg backend, show() will not open a window.
-    """
-    sizes = [row["n"] for row in results]
-    greedy_times = [row["greedy_ms"] for row in results]
-    dp_times = [row["dp_ms"] for row in results]
-
-    plt.figure(figsize=(9, 5))
-    plt.plot(
-        sizes,
-        greedy_times,
-        marker="o",
-        linestyle="-",
-        label="Greedy Fractional Knapsack",
-    )
-    plt.plot(
-        sizes,
-        dp_times,
-        marker="s",
-        linestyle="-",
-        label="0/1 Knapsack DP",
-    )
-    plt.title("Runtime vs Dataset Size — Portfolio Maximizer")
-    plt.xlabel("Dataset Size (number of stocks)")
-    plt.ylabel("Average Runtime (ms)")
-    plt.legend()
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.tight_layout()
-    plt.savefig(filename, dpi=150)
-    print(f"\nGraph saved to: {filename}")
-    # Safe under Agg: no interactive window; still called for completeness.
-    plt.show()
-    plt.close()
-
-
-# ---------------------------------------------------------------------------
-# 6. main
-# ---------------------------------------------------------------------------
-def print_complexities() -> None:
-    """Print theoretical time and space complexities for viva review."""
-    print()
-    print("Theoretical Complexities")
-    print("-" * 40)
-    print("Greedy Fractional Knapsack")
-    print("  Time     : O(n log n)")
-    print("  Aux space: O(n)")
-    print()
-    print("0/1 Knapsack DP (1-D)")
-    print("  Time     : O(nW)   where W = integer-scaled budget")
-    print("  Aux space: O(W)    single DP array — each asset used at most once")
-    print("-" * 40)
-
-
-def main() -> None:
-    """Entry point: generate data, benchmark, print table, plot graph."""
-    print("=" * 64)
-    print("Stock Market Investment Portfolio Maximizer")
-    print("=" * 64)
-    print(f"Fixed capital budget : ${BUDGET:,.2f}")
-    print(f"Risk-free rate       : {RISK_FREE_RATE:.2%}")
-    print(f"Random seed          : {RANDOM_SEED}")
-    print(f"Runs averaged        : {BENCHMARK_RUNS}")
-    print()
-    print(
-        "Synthetic data is NOT real market prediction. "
-        "Greedy (fractional) and DP (0/1) solve different variants — "
-        "profits are not directly comparable."
-    )
-
-    results = run_benchmarks()
-    print_results_table(results)
-    plot_runtime_comparison(results)
-    print_complexities()
+    return jsonify({
+        "market": market,
+        "alloc": alloc,
+        "view_greedy_profit": g_profit,
+        "bench": bench,
+        "complexities": {
+            "greedy": "O(n log n) time, O(n) extra space",
+            "dp": "O(nW) time, O(W) extra space",
+        },
+    })
 
 
 if __name__ == "__main__":
-    main()
+    # uncommon port so it doesn’t collide with random local stuff
+    app.run(host="127.0.0.1", port=8742, debug=False)
