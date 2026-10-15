@@ -1,4 +1,3 @@
-import json
 import random
 import time
 from flask import Flask, jsonify, request, render_template_string
@@ -485,5 +484,5 @@ def analyze():
 
 
 if __name__ == "__main__":
-    # uncommon port so it doesn’t collide with random local stuff
-    app.run(host="127.0.0.1", port=8742, debug=False)
+    # 0.0.0.0 so Cursor port forwarding / other hosts can reach it
+    app.run(host="0.0.0.0", port=8742, debug=False)
