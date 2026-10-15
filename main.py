@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import random
@@ -104,6 +105,90 @@ def timed(fn, runs=1):
         last = fn()
     ms = (time.perf_counter() - t0) / runs * 1000
     return ms, last
+
+
+def dijkstra_route(graph, source=0):
+    """Dijkstra with parents + visit order — used to draw the chosen route."""
+    V = len(graph)
+    dist = [float("inf")] * V
+    parent = [-1] * V
+    visited = [False] * V
+    order = []
+    dist[source] = 0.0
+
+    for _ in range(V):
+        u = -1
+        best = float("inf")
+        for i in range(V):
+            if not visited[i] and dist[i] < best:
+                best = dist[i]
+                u = i
+        if u == -1 or best == float("inf"):
+            break
+        visited[u] = True
+        order.append(u)
+        for v, w in graph[u]:
+            if not visited[v] and dist[u] + w < dist[v]:
+                dist[v] = dist[u] + w
+                parent[v] = u
+    return dist, parent, order
+
+
+def rebuild_path(parent, target):
+    if target < 0 or target >= len(parent):
+        return []
+    path = []
+    cur = target
+    seen = set()
+    while cur != -1 and cur not in seen:
+        seen.add(cur)
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
+    return path
+
+
+def layout_nodes(V, seed):
+    """Put cities on a ring with a little jitter so the map feels organic."""
+    rng = random.Random(seed + 99)
+    nodes = []
+    for i in range(V):
+        ang = (2 * math.pi * i / V) - math.pi / 2
+        rad = 0.38 + rng.uniform(-0.04, 0.04)
+        nodes.append({
+            "id": i,
+            "x": 0.5 + rad * math.cos(ang),
+            "y": 0.5 + rad * math.sin(ang),
+        })
+    return nodes
+
+
+def build_map_view(graph, seed, source=0):
+    V = len(graph)
+    dist, parent, order = dijkstra_route(graph, source)
+    # pick a far-away reachable city as the destination
+    target = source
+    best = -1.0
+    for i, d in enumerate(dist):
+        if d != float("inf") and d > best:
+            best = d
+            target = i
+    path = rebuild_path(parent, target)
+    edges = []
+    for u in range(V):
+        for v, w in graph[u]:
+            edges.append({"u": u, "v": v, "w": w})
+    return {
+        "V": V,
+        "E": len(edges),
+        "source": source,
+        "target": target,
+        "dist": None if best < 0 else round(best, 2),
+        "path": path,
+        "visit_order": order,
+        "nodes": layout_nodes(V, seed),
+        "edges": edges,
+    }
 
 
 PAGE = r"""
@@ -214,6 +299,18 @@ PAGE = r"""
   }
   .tip b{color:var(--gold)}
   .legend-note{color:var(--muted);font-size:.8rem;margin:6px 0 0;line-height:1.4}
+  .map-wrap{margin-bottom:14px}
+  .map-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+  .map-top h3{margin:0;font-size:1rem;flex:1}
+  #mapCanvas{
+    width:100%;height:min(520px,70vw);display:block;border-radius:12px;
+    background:#0c100e;border:1px solid var(--line)
+  }
+  .map-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:.8rem;color:var(--muted)}
+  .map-legend i{
+    display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle
+  }
+  .swatch{display:inline-block;width:18px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}
 </style>
 </head>
 <body>
@@ -362,15 +459,16 @@ PAGE = r"""
   <!-- ===================== PROJECT 2 ===================== -->
   <section id="tab-p2" class="hidden">
     <div class="tip">
-      <b>What this shows:</b> We build a fake map of one-way roads, then ask:
-      “from city 0, how fast can each algorithm compute shortest travel times to every city?”
-      All three should get the <b>same answers</b> — we compare <b>speed</b>, not correctness.
+      <b>What this shows:</b> We build fake one-way road maps that get bigger.
+      Below you’ll <b>see the map grow</b>, watch cities get explored, then see the
+      <b>shortest route</b> from the green start to the coral destination.
+      The timing cards still compare which algorithm is fastest (answers match).
     </div>
 
     <div class="howto">
-      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Large shows the speed gap more clearly.</p></div>
-      <div class="step"><span class="num">2</span><strong>Watch the times</strong><p>Each method solves the same map. Lower milliseconds = faster.</p></div>
-      <div class="step"><span class="num">3</span><strong>Read who wins</strong><p>On sparse roads, the heap version of Dijkstra usually wins.</p></div>
+      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Large shows growth + speed gaps more clearly.</p></div>
+      <div class="step"><span class="num">2</span><strong>Watch the map</strong><p>Gold = explored. Blue line = route home. Use play to grow the map.</p></div>
+      <div class="step"><span class="num">3</span><strong>Check the race</strong><p>Same distances — different runtimes. Heap Dijkstra usually wins.</p></div>
     </div>
 
     <div class="explain three-col">
@@ -399,6 +497,24 @@ PAGE = r"""
       <p class="legend-note">V = number of cities/junctions. E = number of one-way roads (about 3×V here).</p>
       <div class="status" id="status2">Waiting to run…</div>
       <div class="err" id="err2"></div>
+    </div>
+
+    <div class="panel map-wrap">
+      <div class="map-top">
+        <h3>Watch the map grow &amp; the route light up</h3>
+        <button type="button" class="chip" id="mapPrev">◀ smaller</button>
+        <button type="button" class="chip on" id="mapPlay">▶ play growth</button>
+        <button type="button" class="chip" id="mapNext">bigger ▶</button>
+      </div>
+      <canvas id="mapCanvas" width="1000" height="620"></canvas>
+      <div class="map-legend">
+        <span><i style="background:#5fbf7a"></i>Start (city 0)</span>
+        <span><i style="background:#e07a5f"></i>Destination</span>
+        <span><span class="swatch" style="background:#2f3d33"></span>Roads</span>
+        <span><span class="swatch" style="background:#d4a54a"></span>Explored so far</span>
+        <span><span class="swatch" style="background:#6ea8d8"></span>Chosen shortest route</span>
+      </div>
+      <p class="legend-note" id="mapCaption">Run a speed test to draw the maps.</p>
     </div>
 
     <div class="three">
@@ -461,9 +577,9 @@ const presets = {
   tight:  { budget: 800,  n: 12 },
 };
 const rPresets = {
-  small:  { sizes: [40, 70, 100], trials: 1 },
-  medium: { sizes: [50, 100, 200], trials: 2 },
-  large:  { sizes: [50, 100, 200, 350], trials: 2 },
+  small:  { sizes: [16, 28, 48], trials: 1 },
+  medium: { sizes: [30, 55, 90], trials: 1 },
+  large:  { sizes: [40, 80, 140, 220], trials: 1 },
 };
 
 let cmpChart, timeChart, routeChart, routeBar;
@@ -670,6 +786,149 @@ function mkCharts2(){
   });
 }
 
+let maps = [];
+let mapIndex = 0;
+let mapTimer = null;
+let animTimer = null;
+let animStep = 0;
+
+function stopMapPlay(){
+  if(mapTimer){ clearInterval(mapTimer); mapTimer = null; }
+  const b = document.getElementById("mapPlay");
+  if(b){ b.textContent = "▶ play growth"; b.classList.add("on"); }
+}
+function stopAnim(){
+  if(animTimer){ clearInterval(animTimer); animTimer = null; }
+}
+
+function drawMap(m, exploredCount){
+  const canvas = document.getElementById("mapCanvas");
+  if(!canvas || !m) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  // soft vignette background
+  const g = ctx.createRadialGradient(W*0.5,H*0.5,40,W*0.5,H*0.5,W*0.55);
+  g.addColorStop(0,"#152019"); g.addColorStop(1,"#0c100e");
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+  const pad = 36;
+  const pos = {};
+  m.nodes.forEach(n => {
+    pos[n.id] = {
+      x: pad + n.x * (W - pad*2),
+      y: pad + n.y * (H - pad*2),
+    };
+  });
+
+  const explored = new Set((m.visit_order || []).slice(0, exploredCount));
+  const pathSet = new Set();
+  const pathEdges = new Set();
+  for(let i=0;i<(m.path||[]).length;i++){
+    pathSet.add(m.path[i]);
+    if(i>0) pathEdges.add(m.path[i-1] + ">" + m.path[i]);
+  }
+  const showPath = exploredCount >= (m.visit_order||[]).length;
+
+  // roads
+  for(const e of m.edges){
+    const a = pos[e.u], b = pos[e.v];
+    if(!a || !b) continue;
+    const onPath = showPath && pathEdges.has(e.u + ">" + e.v);
+    const hot = explored.has(e.u) && explored.has(e.v);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    if(onPath){
+      ctx.strokeStyle = "#6ea8d8";
+      ctx.lineWidth = 3.2;
+      ctx.globalAlpha = 1;
+    } else if(hot){
+      ctx.strokeStyle = "#d4a54a";
+      ctx.lineWidth = 1.4;
+      ctx.globalAlpha = 0.55;
+    } else {
+      ctx.strokeStyle = "#2f3d33";
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.45;
+    }
+    ctx.stroke();
+    // tiny arrow head
+    if(m.V <= 80){
+      const ang = Math.atan2(b.y-a.y, b.x-a.x);
+      const mx = a.x*0.35 + b.x*0.65, my = a.y*0.35 + b.y*0.65;
+      ctx.beginPath();
+      ctx.moveTo(mx, my);
+      ctx.lineTo(mx - 6*Math.cos(ang-0.35), my - 6*Math.sin(ang-0.35));
+      ctx.lineTo(mx - 6*Math.cos(ang+0.35), my - 6*Math.sin(ang+0.35));
+      ctx.closePath();
+      ctx.globalAlpha = onPath ? 0.95 : 0.35;
+      ctx.fillStyle = onPath ? "#6ea8d8" : "#9aab9c";
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // cities
+  const r = m.V > 120 ? 2.2 : m.V > 60 ? 3.2 : 5;
+  for(const n of m.nodes){
+    const p = pos[n.id];
+    const isStart = n.id === m.source;
+    const isEnd = n.id === m.target;
+    const seen = explored.has(n.id);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, isStart||isEnd ? r+2.5 : r, 0, Math.PI*2);
+    if(isStart) ctx.fillStyle = "#5fbf7a";
+    else if(isEnd) ctx.fillStyle = "#e07a5f";
+    else if(showPath && pathSet.has(n.id)) ctx.fillStyle = "#6ea8d8";
+    else if(seen) ctx.fillStyle = "#d4a54a";
+    else ctx.fillStyle = "#4a5a50";
+    ctx.fill();
+    if(m.V <= 40 && (isStart || isEnd || (showPath && pathSet.has(n.id)))){
+      ctx.fillStyle = "#e8efe6";
+      ctx.font = "11px IBM Plex Sans, sans-serif";
+      ctx.fillText(String(n.id), p.x + 7, p.y - 7);
+    }
+  }
+
+  const hops = Math.max(0, (m.path||[]).length - 1);
+  document.getElementById("mapCaption").innerHTML =
+    `<b>${m.V}</b> cities · <b>${m.E}</b> roads · route ` +
+    `<b>${m.source}</b> → <b>${m.target}</b> · ` +
+    (m.dist==null ? "unreachable" : `distance <b>${m.dist}</b> · <b>${hops}</b> hops`) +
+    (showPath ? " · blue path = shortest route found" : " · exploring…");
+}
+
+function playExplore(m){
+  stopAnim();
+  animStep = 0;
+  const total = (m.visit_order || []).length;
+  const stepEvery = Math.max(16, Math.min(80, 1400 / Math.max(1,total)));
+  animTimer = setInterval(() => {
+    animStep += Math.max(1, Math.floor(total / 40));
+    if(animStep >= total){
+      animStep = total;
+      drawMap(m, animStep);
+      stopAnim();
+      return;
+    }
+    drawMap(m, animStep);
+  }, stepEvery);
+  drawMap(m, 0);
+}
+
+function showMapAt(i, animate=true){
+  if(!maps.length) return;
+  mapIndex = Math.max(0, Math.min(maps.length-1, i));
+  const m = maps[mapIndex];
+  if(animate) playExplore(m);
+  else {
+    stopAnim();
+    drawMap(m, (m.visit_order||[]).length);
+  }
+}
+
 function paint2(d){
   p2Loaded = true;
   const last = d.rows[d.rows.length - 1];
@@ -705,6 +964,10 @@ function paint2(d){
   }).join("");
 
   document.getElementById("rWhy").innerHTML = d.blurb;
+
+  maps = d.maps || [];
+  stopMapPlay();
+  showMapAt(0, true);
 }
 
 async function run2(){
@@ -733,6 +996,30 @@ async function run2(){
     if(myId === runId2){ btn.disabled = false; btn.textContent = "Run speed test"; }
   }
 }
+
+document.getElementById("mapPrev").addEventListener("click", () => {
+  stopMapPlay();
+  showMapAt(mapIndex - 1, true);
+});
+document.getElementById("mapNext").addEventListener("click", () => {
+  stopMapPlay();
+  showMapAt(mapIndex + 1, true);
+});
+document.getElementById("mapPlay").addEventListener("click", () => {
+  if(mapTimer){ stopMapPlay(); return; }
+  if(!maps.length) return;
+  const btn = document.getElementById("mapPlay");
+  btn.textContent = "■ stop";
+  btn.classList.remove("on");
+  showMapAt(0, true);
+  mapTimer = setInterval(() => {
+    if(mapIndex >= maps.length - 1){
+      stopMapPlay();
+      return;
+    }
+    showMapAt(mapIndex + 1, true);
+  }, 2600);
+});
 
 mkCharts1();
 mkCharts2();
@@ -843,12 +1130,13 @@ def routing():
     if not sizes or min(sizes) < 5 or max(sizes) > 500 or trials < 1 or trials > 5:
         return jsonify({"error": "keep V in 5..500 and trials in 1..5"}), 400
 
-    # quiet console spam from nr.run_benchmarks by calling pieces ourselves
     rows = []
+    maps = []
     source = 0
     for idx, V in enumerate(sizes):
         E = edge_factor * V
-        graph = nr.generate_random_directed_graph(V, E, seed=seed + idx)
+        gseed = seed + idx
+        graph = nr.generate_random_directed_graph(V, E, seed=gseed)
         array_times, heap_times, bf_times = [], [], []
         for _ in range(trials):
             t, dist_a = nr._time_call(nr.dijkstra_array, graph, source)
@@ -870,6 +1158,18 @@ def routing():
             "bf_ms": round(sum(bf_times) / trials, 4),
         })
 
+        # keep drawings readable — for huge V, build a smaller twin map for the canvas
+        if V <= 120:
+            maps.append(build_map_view(graph, gseed, source))
+        else:
+            vis_v = 80
+            vis_graph = nr.generate_random_directed_graph(
+                vis_v, edge_factor * vis_v, seed=gseed
+            )
+            mv = build_map_view(vis_graph, gseed, source)
+            mv["note"] = f"Visual preview uses {vis_v} cities (full benchmark was V={V})."
+            maps.append(mv)
+
     last = rows[-1]
     order = sorted(
         [("array", last["array_ms"]), ("heap", last["heap_ms"]), ("bf", last["bf_ms"])],
@@ -884,10 +1184,16 @@ def routing():
         f"In plain English: on the biggest map ({last['V']} cities), "
         f"<b>{winner}</b> finished first at {order[0][1]:.2f} ms. "
         "Same shortest-path answers — only the speed differs. "
-        "Heap Dijkstra is usually best on sparse road maps like these."
+        "On the map above: gold cities are explored, blue line is the route chosen."
     )
 
-    return jsonify({"trials": trials, "edge_factor": edge_factor, "rows": rows, "blurb": blurb})
+    return jsonify({
+        "trials": trials,
+        "edge_factor": edge_factor,
+        "rows": rows,
+        "maps": maps,
+        "blurb": blurb,
+    })
 
 
 if __name__ == "__main__":
