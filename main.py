@@ -1,8 +1,10 @@
+import heapq
 import math
 import os
 import sys
 import random
 import time
+from collections import deque
 from flask import Flask, jsonify, request, render_template_string
 
 # Project 2 algorithms live in the daa-project-2 folder
@@ -121,34 +123,82 @@ def rebuild_path(parent, target):
     return path
 
 
-def dijkstra_array_trace(graph, source=0):
-    V = len(graph)
-    dist = [float("inf")] * V
-    parent = [-1] * V
-    visited = [False] * V
-    order = []
-    dist[source] = 0.0
-    for _ in range(V):
-        u = -1
-        best = float("inf")
-        for i in range(V):
-            if not visited[i] and dist[i] < best:
-                best = dist[i]
-                u = i
-        if u == -1 or best == float("inf"):
-            break
-        visited[u] = True
-        order.append(u)
-        for v, w in graph[u]:
-            if not visited[v] and dist[u] + w < dist[v]:
-                dist[v] = dist[u] + w
-                parent[v] = u
-    return dist, parent, order
+def path_cost(graph, path):
+    if len(path) < 2:
+        return 0
+    total = 0
+    for a, b in zip(path, path[1:]):
+        options = [w for v, w in graph[a] if v == b]
+        if not options:
+            return None
+        total += min(options)
+    return total
 
 
-def dijkstra_heap_trace(graph, source=0):
-    import heapq
+_DISTRICTS = [
+    "Harbor", "Midtown", "Heights", "Market", "Campus",
+    "Airport", "Oldtown", "Riverside", "Parkside", "Station",
+]
 
+
+def generate_city_map(side, seed):
+    """
+    Build a block-grid city:
+      - local streets (cheap per block, many hops)
+      - highways (one hop, but pricey) so BFS loves them and Dijkstra often doesn't
+    """
+    rng = random.Random(seed)
+    side = max(3, int(side))
+    V = side * side
+    graph = {i: [] for i in range(V)}
+
+    def idx(r, c):
+        return r * side + c
+
+    def add_edge(u, v, w):
+        graph[u].append((v, w))
+        graph[v].append((u, w))
+
+    # city streets along the grid
+    for r in range(side):
+        for c in range(side):
+            u = idx(r, c)
+            if c + 1 < side:
+                add_edge(u, idx(r, c + 1), rng.randint(2, 4))
+            if r + 1 < side:
+                add_edge(u, idx(r + 1, c), rng.randint(2, 4))
+
+    # arterial highways: skip blocks in one hop, but cost more than the street detour
+    jumps = [(0, 2), (0, 3), (2, 0), (3, 0), (2, 2), (3, 1), (1, 3)]
+    for _ in range(side + 2):
+        r = rng.randrange(side)
+        c = rng.randrange(side)
+        dr, dc = rng.choice(jumps)
+        r2, c2 = r + dr, c + dc
+        if 0 <= r2 < side and 0 <= c2 < side:
+            hops = abs(dr) + abs(dc)
+            # pricier than walking the blocks → Dijkstra prefers streets; BFS prefers 1 hop
+            hwy = hops * 3 + rng.randint(5, 10)
+            add_edge(idx(r, c), idx(r2, c2), hwy)
+
+    nodes = []
+    for i in range(V):
+        r, c = divmod(i, side)
+        # slight lane jitter so it feels like a real street grid
+        nodes.append({
+            "id": i,
+            "name": f"{_DISTRICTS[(r + c) % len(_DISTRICTS)]} {chr(65+c)}{r+1}",
+            "x": (c + 0.5 + rng.uniform(-0.08, 0.08)) / side,
+            "y": (r + 0.5 + rng.uniform(-0.08, 0.08)) / side,
+            "row": r,
+            "col": c,
+        })
+
+    source, target = 0, V - 1
+    return graph, nodes, source, target, side
+
+
+def dijkstra_trace(graph, source):
     V = len(graph)
     dist = [float("inf")] * V
     parent = [-1] * V
@@ -159,8 +209,6 @@ def dijkstra_heap_trace(graph, source=0):
     while pq:
         d, u = heapq.heappop(pq)
         if u in seen:
-            continue
-        if d > dist[u]:
             continue
         seen.add(u)
         order.append(u)
@@ -173,90 +221,120 @@ def dijkstra_heap_trace(graph, source=0):
     return dist, parent, order
 
 
-def bellman_ford_trace(graph, source=0):
+def bfs_trace(graph, source, target):
+    """Fewest streets (hops), ignores road lengths — often a different route."""
     V = len(graph)
-    dist = [float("inf")] * V
     parent = [-1] * V
-    order = [source]
-    first_hit = {source: True}
-    dist[source] = 0.0
-    edges = [(u, v, w) for u in range(V) for (v, w) in graph[u]]
-    for _ in range(V - 1):
-        changed = False
-        for u, v, w in edges:
-            if dist[u] != float("inf") and dist[u] + w < dist[v]:
-                dist[v] = dist[u] + w
-                parent[v] = u
-                changed = True
-                if v not in first_hit:
-                    first_hit[v] = True
-                    order.append(v)
-        if not changed:
+    order = []
+    q = deque([source])
+    seen = {source}
+    while q:
+        u = q.popleft()
+        order.append(u)
+        if u == target:
             break
-    # append any leftover reachable nodes so animation can finish cleanly
-    for i, d in enumerate(dist):
-        if d != float("inf") and i not in first_hit:
-            order.append(i)
-    return dist, parent, order
-
-
-_DISTRICTS = [
-    "Harbor", "Midtown", "Heights", "Market", "Campus",
-    "Airport", "Oldtown", "Riverside", "Parkside", "Station",
-]
-
-
-def layout_nodes(V, seed):
-    """City-block style layout: neighborhoods on a grid with a bit of jitter."""
-    rng = random.Random(seed + 99)
-    cols = max(3, int(math.ceil(math.sqrt(V))))
-    rows = max(3, int(math.ceil(V / cols)))
-    nodes = []
+        # light edges first only for stable animation; hop count still BFS
+        nbrs = sorted(graph[u], key=lambda vw: vw[1])
+        for v, _w in nbrs:
+            if v not in seen:
+                seen.add(v)
+                parent[v] = u
+                q.append(v)
     for i in range(V):
-        r, c = divmod(i, cols)
-        district = _DISTRICTS[i % len(_DISTRICTS)]
-        nodes.append({
-            "id": i,
-            "name": f"{district} {i}",
-            "x": (c + 0.5 + rng.uniform(-0.22, 0.22)) / cols,
-            "y": (r + 0.5 + rng.uniform(-0.22, 0.22)) / rows,
-        })
-    return nodes
+        if i not in seen:
+            continue
+        if i not in order:
+            order.append(i)
+    return parent, order
 
 
-def build_map_view(graph, seed, source=0):
-    """Same city map for all 3 algorithms, each with its own explore order."""
-    V = len(graph)
-    d_a, p_a, ord_a = dijkstra_array_trace(graph, source)
-    d_h, p_h, ord_h = dijkstra_heap_trace(graph, source)
-    d_b, p_b, ord_b = bellman_ford_trace(graph, source)
+def greedy_geo_trace(graph, source, target, nodes):
+    """Greedy best-first: head toward the destination geographically (can be suboptimal)."""
+    parent = [-1] * len(graph)
+    order = []
+    seen = set()
+    pos = {n["id"]: (n["x"], n["y"]) for n in nodes}
 
-    target = source
-    best = -1.0
-    for i, d in enumerate(d_a):
-        if d != float("inf") and d > best:
-            best = d
-            target = i
+    def h(i):
+        x, y = pos[i]
+        tx, ty = pos[target]
+        return (x - tx) ** 2 + (y - ty) ** 2
 
-    path = rebuild_path(p_a, target)
+    pq = [(h(source), source)]
+    while pq:
+        _, u = heapq.heappop(pq)
+        if u in seen:
+            continue
+        seen.add(u)
+        order.append(u)
+        if u == target:
+            break
+        for v, _w in sorted(graph[u], key=lambda vw: h(vw[0])):
+            if v in seen:
+                continue
+            if parent[v] == -1 and v != source:
+                parent[v] = u
+            heapq.heappush(pq, (h(v), v))
+    return parent, order
+
+
+def build_map_view(side, seed):
+    """
+    Same city for 3 routing rules that intentionally pick different paths:
+      - Dijkstra: cheapest total distance
+      - BFS: fewest road segments
+      - Greedy: always aim straight at the destination
+    """
+    graph, nodes, source, target, side = generate_city_map(side, seed)
+    dist, p_dijk, ord_dijk = dijkstra_trace(graph, source)
+    p_bfs, ord_bfs = bfs_trace(graph, source, target)
+    p_greed, ord_greed = greedy_geo_trace(graph, source, target, nodes)
+
+    path_d = rebuild_path(p_dijk, target)
+    path_b = rebuild_path(p_bfs, target)
+    path_g = rebuild_path(p_greed, target)
+
     edges = []
-    for u in range(V):
+    for u in range(len(graph)):
+        for v, w in graph[u]:
+            if u < v:  # draw once; still directed? city is bidirectional — store both for viz arrows one way
+                edges.append({"u": u, "v": v, "w": w})
+
+    # for animation arrows keep both directions as separate edges
+    edges = []
+    for u in range(len(graph)):
         for v, w in graph[u]:
             edges.append({"u": u, "v": v, "w": w})
 
     return {
-        "V": V,
+        "V": len(graph),
         "E": len(edges),
+        "side": side,
         "source": source,
         "target": target,
-        "dist": None if best < 0 else round(best, 2),
-        "path": path,
-        "nodes": layout_nodes(V, seed),
+        "dist": None if dist[target] == float("inf") else round(dist[target], 2),
+        "path": path_d,
+        "nodes": nodes,
         "edges": edges,
         "algos": {
-            "array": {"label": "Dijkstra (array)", "visit_order": ord_a, "path": rebuild_path(p_a, target)},
-            "heap": {"label": "Dijkstra (heap)", "visit_order": ord_h, "path": rebuild_path(p_h, target)},
-            "bf": {"label": "Bellman-Ford", "visit_order": ord_b, "path": rebuild_path(p_b, target)},
+            "array": {
+                "label": "Dijkstra · shortest distance",
+                "visit_order": ord_dijk,
+                "path": path_d,
+                "metric": f"cost {path_cost(graph, path_d)} · {max(0,len(path_d)-1)} hops",
+            },
+            "heap": {
+                "label": "BFS · fewest streets",
+                "visit_order": ord_bfs,
+                "path": path_b,
+                "metric": f"cost {path_cost(graph, path_b)} · {max(0,len(path_b)-1)} hops",
+            },
+            "bf": {
+                "label": "Greedy · head for destination",
+                "visit_order": ord_greed,
+                "path": path_g,
+                "metric": f"cost {path_cost(graph, path_g)} · {max(0,len(path_g)-1)} hops",
+            },
         },
     }
 
@@ -538,15 +616,16 @@ PAGE = r"""
   <!-- ===================== PROJECT 2 ===================== -->
   <section id="tab-p2" class="hidden">
     <div class="tip">
-      <b>What this shows:</b> One fake city road network is copied into <b>three panels</b> —
-      Array Dijkstra, Heap Dijkstra, and Bellman-Ford. Watch how each explores differently,
-      then lands on the same shortest route (cyan). Timing cards still crown the fastest.
+      <b>What this shows:</b> A real-looking <b>city street grid</b> (cheap local streets + pricey highway shortcuts).
+      Three routing rules run on that <b>same city</b> and usually pick <b>different cyan routes</b>:
+      Dijkstra minimizes distance, BFS minimizes number of streets, Greedy aims straight at the destination.
+      Timing cards below still race Array/Heap Dijkstra vs Bellman-Ford on speed.
     </div>
 
     <div class="howto">
-      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Larger sizes make explore-order differences obvious.</p></div>
-      <div class="step"><span class="num">2</span><strong>Watch all three</strong><p>Same roads everywhere. Gold = that algo’s explore order. Cyan = final route.</p></div>
-      <div class="step"><span class="num">3</span><strong>Check the race</strong><p>Routes should match; runtimes usually won’t. Heap Dijkstra often wins.</p></div>
+      <div class="step"><span class="num">1</span><strong>Pick a city size</strong><p>Small / Medium / Large grows the street grid.</p></div>
+      <div class="step"><span class="num">2</span><strong>Compare the three routes</strong><p>Same START→END. Cyan paths often differ — that’s intentional.</p></div>
+      <div class="step"><span class="num">3</span><strong>Read the speed race</strong><p>Charts still show which shortest-path code runs fastest.</p></div>
     </div>
 
     <div class="explain three-col">
@@ -586,27 +665,30 @@ PAGE = r"""
       </div>
       <div class="map-grid">
         <div class="map-card">
-          <h4 class="gold">Dijkstra (array)</h4>
+          <h4 class="gold">Dijkstra · shortest distance</h4>
           <div class="cy" id="cyArray"></div>
+          <p class="legend-note" id="metricArray" style="margin-top:6px">—</p>
         </div>
         <div class="map-card">
-          <h4 class="blue">Dijkstra (heap)</h4>
+          <h4 class="blue">BFS · fewest streets</h4>
           <div class="cy" id="cyHeap"></div>
+          <p class="legend-note" id="metricHeap" style="margin-top:6px">—</p>
         </div>
         <div class="map-card">
-          <h4 class="violet">Bellman-Ford</h4>
+          <h4 class="violet">Greedy · head for destination</h4>
           <div class="cy" id="cyBf"></div>
+          <p class="legend-note" id="metricBf" style="margin-top:6px">—</p>
         </div>
       </div>
       <div class="map-legend">
-        <span><i style="background:#3dd68c"></i>Start</span>
-        <span><i style="background:#ff6b6b"></i>Destination</span>
-        <span><span class="swatch" style="background:#3d4f5f"></span>Same roads</span>
-        <span><span class="swatch" style="background:#f0c14b"></span>Explored by that algo</span>
-        <span><span class="swatch" style="background:#4cc9f0"></span>Shortest route</span>
+        <span><i style="background:#3dd68c"></i>Start (NW)</span>
+        <span><i style="background:#ff6b6b"></i>Destination (SE)</span>
+        <span><span class="swatch" style="background:#3d4f5f"></span>City streets / highways</span>
+        <span><span class="swatch" style="background:#f0c14b"></span>Explored</span>
+        <span><span class="swatch" style="background:#4cc9f0"></span>Chosen route (often different!)</span>
       </div>
-      <p class="legend-note" id="mapCaption">Run a speed test — all three panels use the identical city network.</p>
-      <p class="lib-credit">Maps drawn with <b>Cytoscape.js</b> (MIT). Same graph, different explore order per algorithm.</p>
+      <p class="legend-note" id="mapCaption">Run a speed test — one city, three routing rules.</p>
+      <p class="lib-credit">City maps via <b>Cytoscape.js</b>. Highways are short hops but expensive, so BFS and Dijkstra disagree on purpose.</p>
     </div>
 
     <div class="three">
@@ -669,9 +751,9 @@ const presets = {
   tight:  { budget: 800,  n: 12 },
 };
 const rPresets = {
-  small:  { sizes: [16, 28, 48], trials: 1 },
-  medium: { sizes: [30, 55, 90], trials: 1 },
-  large:  { sizes: [40, 80, 140, 220], trials: 1 },
+  small:  { sizes: [40, 70, 100], sides: [4, 5, 6], trials: 1 },
+  medium: { sizes: [50, 100, 160], sides: [5, 6, 7], trials: 1 },
+  large:  { sizes: [60, 120, 200], sides: [6, 7, 8, 9], trials: 1 },
 };
 
 let cmpChart, timeChart, routeChart, routeBar;
@@ -1036,17 +1118,22 @@ function styleAll(m, frac){
     const count = Math.floor(frac * order.length);
     styleOne(cyMaps[key], m, key, count);
   });
-  const hops = Math.max(0, (m.path||[]).length - 1);
   const startName = (m.nodes.find(n => n.id === m.source) || {}).name || ("City " + m.source);
   const endName = (m.nodes.find(n => n.id === m.target) || {}).name || ("City " + m.target);
   const done = frac >= 1;
+  const paths = ALGO_KEYS.map(k => JSON.stringify((m.algos[k]||{}).path||[]));
+  const allSame = paths[0]===paths[1] && paths[1]===paths[2];
+  document.getElementById("metricArray").textContent = (m.algos.array && m.algos.array.metric) || "—";
+  document.getElementById("metricHeap").textContent = (m.algos.heap && m.algos.heap.metric) || "—";
+  document.getElementById("metricBf").textContent = (m.algos.bf && m.algos.bf.metric) || "—";
   document.getElementById("mapCaption").innerHTML =
-    `Same map on all three · <b>${m.V}</b> junctions · <b>${m.E}</b> roads · ` +
+    `<b>${m.side}×${m.side}</b> city blocks · <b>${m.V}</b> junctions · ` +
     `<b>${startName}</b> → <b>${endName}</b> · ` +
-    (m.dist==null ? "unreachable" : `cost <b>${m.dist}</b> · <b>${hops}</b> hops`) +
     (done
-      ? " · final cyan routes should match (positive weights)"
-      : " · gold shows each algorithm’s explore order");
+      ? (allSame
+          ? "routes matched this round (try another size)"
+          : "<b class='coral'>routes differ</b> — different rules, different paths")
+      : "exploring…");
 }
 
 function playExplore(m){
@@ -1277,6 +1364,12 @@ def routing():
     if not sizes or min(sizes) < 5 or max(sizes) > 500 or trials < 1 or trials > 5:
         return jsonify({"error": "keep V in 5..500 and trials in 1..5"}), 400
 
+    try:
+        sides = [int(x) for x in data.get("sides", [4, 5, 6])]
+    except Exception:
+        sides = [4, 5, 6]
+    sides = [max(3, min(10, s)) for s in sides] or [4, 5, 6]
+
     rows = []
     maps = []
     source = 0
@@ -1305,17 +1398,9 @@ def routing():
             "bf_ms": round(sum(bf_times) / trials, 4),
         })
 
-        # Cytoscape stays snappy under ~90 nodes; bigger benches get a twin preview map
-        if V <= 90:
-            maps.append(build_map_view(graph, gseed, source))
-        else:
-            vis_v = 64
-            vis_graph = nr.generate_random_directed_graph(
-                vis_v, edge_factor * vis_v, seed=gseed
-            )
-            mv = build_map_view(vis_graph, gseed, source)
-            mv["note"] = f"Visual preview uses {vis_v} junctions (full benchmark was V={V})."
-            maps.append(mv)
+    # visual city maps (separate from timing graphs) — grow block by block
+    for i, side in enumerate(sides):
+        maps.append(build_map_view(side, seed + 100 + i))
 
     last = rows[-1]
     order = sorted(
