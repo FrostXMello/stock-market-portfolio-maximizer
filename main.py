@@ -468,6 +468,36 @@ PAGE = r"""
   }
   .swatch{display:inline-block;width:18px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}
   .lib-credit{font-size:.72rem;color:#6f7f72;margin-top:6px}
+  .stock-grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px
+  }
+  .stock-tile{
+    background:#101612;border:1px solid var(--line);border-radius:10px;padding:8px;
+    font-size:.75rem;transition:transform .15s, border-color .2s, box-shadow .2s
+  }
+  .stock-tile b{display:block;font-size:.85rem;margin-bottom:2px}
+  .stock-tile .muted{color:var(--muted)}
+  .stock-tile.pick-g{border-color:var(--gold);box-shadow:0 0 0 1px rgba(212,165,74,.35)}
+  .stock-tile.pick-d{border-color:var(--blue);box-shadow:0 0 0 1px rgba(110,168,216,.35)}
+  .stock-tile.pick-both{border-color:var(--green);box-shadow:0 0 0 1px rgba(95,191,122,.4)}
+  .stock-tile.frac-tile{outline:1px dashed var(--coral)}
+  .wallet{
+    height:18px;background:#0c100e;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:8px 0 10px
+  }
+  .wallet-fill{height:100%;width:0%;border-radius:999px;transition:width .35s ease}
+  .wallet-fill.gold{background:linear-gradient(90deg,#a87b2a,var(--gold))}
+  .wallet-fill.blue{background:linear-gradient(90deg,#3d6f96,var(--blue))}
+  .cart{display:flex;flex-wrap:wrap;gap:6px;min-height:40px}
+  .cart-chip{
+    border-radius:999px;padding:4px 9px;font-size:.72rem;font-weight:600;
+    background:#1a221c;border:1px solid var(--line);opacity:0;transform:translateY(6px);
+    transition:opacity .25s, transform .25s
+  }
+  .cart-chip.show{opacity:1;transform:none}
+  .cart-chip.g{border-color:var(--gold);color:var(--gold)}
+  .cart-chip.d{border-color:var(--blue);color:var(--blue)}
+  .cart-chip.frac{border-color:var(--coral);color:var(--coral)}
+  .viz-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -492,9 +522,9 @@ PAGE = r"""
   <!-- ===================== PROJECT 1 ===================== -->
   <section id="tab-p1">
     <div class="tip">
-      <b>What this shows:</b> You have fake money and a list of fake stocks.
-      Two algorithms try to earn the most expected profit. They use <b>different rules</b>,
-      so their answers can differ — that’s the point.
+      <b>What this shows:</b> Fake cash + a market board of stocks.
+      Watch wallets fill, shopping carts build, and tiles light up for
+      <b>Greedy</b> (fractions OK) vs <b>DP</b> (whole shares only).
     </div>
 
     <div class="howto">
@@ -545,17 +575,34 @@ PAGE = r"""
       <div class="err" id="err1"></div>
     </div>
 
+    <div class="panel" style="margin-bottom:14px">
+      <div class="viz-head">
+        <h3 style="margin:0;font-size:.95rem">Market board</h3>
+        <span class="legend-note" style="margin:0">Brighter tile = better profit-per-dollar. Borders show who bought it.</span>
+      </div>
+      <div class="map-legend" style="margin-top:8px">
+        <span><span class="swatch" style="background:var(--gold)"></span>Greedy only</span>
+        <span><span class="swatch" style="background:var(--blue)"></span>DP only</span>
+        <span><span class="swatch" style="background:var(--green)"></span>Both</span>
+        <span><span class="swatch" style="background:var(--coral)"></span>Fractional slice</span>
+      </div>
+      <div id="marketGrid" class="stock-grid"></div>
+    </div>
+
     <div class="vs">
       <div class="panel card">
         <h2 class="gold">Greedy result</h2>
         <div class="tag">Can buy partial shares · usually fastest</div>
         <div class="big gold" id="gProfit">—</div>
+        <div class="wallet" title="How much of the budget greedy spent"><div class="wallet-fill gold" id="gWallet"></div></div>
         <div class="meta">
           <div><span>Money used</span><b id="gSpent">—</b></div>
           <div><span>Time taken</span><b id="gMs">—</b></div>
           <div><span>Stocks chosen</span><b id="gCount">—</b></div>
           <div><span>Used a fraction?</span><b id="gFrac">—</b></div>
         </div>
+        <p class="legend-note">Shopping cart fills in buy order ↓</p>
+        <div class="cart" id="gCart"></div>
       </div>
       <div class="mid">
         <div class="delta" id="delta">vs</div>
@@ -566,12 +613,15 @@ PAGE = r"""
         <h2 class="blue">DP result</h2>
         <div class="tag">Whole shares only · slower but strict</div>
         <div class="big blue" id="dProfit">—</div>
+        <div class="wallet" title="How much of the budget DP spent"><div class="wallet-fill blue" id="dWallet"></div></div>
         <div class="meta">
           <div><span>Money used</span><b id="dSpent">—</b></div>
           <div><span>Time taken</span><b id="dMs">—</b></div>
           <div><span>Stocks chosen</span><b id="dCount">—</b></div>
           <div><span>Used a fraction?</span><b>no (not allowed)</b></div>
         </div>
+        <p class="legend-note">Final basket (order doesn’t matter for DP) ↓</p>
+        <div class="cart" id="dCart"></div>
       </div>
     </div>
 
@@ -585,6 +635,17 @@ PAGE = r"""
         <h3>How long each took</h3>
         <canvas id="timeChart"></canvas>
         <p class="legend-note">Lower is faster. Greedy is almost always quicker.</p>
+      </div>
+    </div>
+
+    <div class="charts">
+      <div class="panel chart-box">
+        <h3>Greedy basket mix (by profit)</h3>
+        <canvas id="gPie"></canvas>
+      </div>
+      <div class="panel chart-box">
+        <h3>DP basket mix (by profit)</h3>
+        <canvas id="dPie"></canvas>
       </div>
     </div>
 
@@ -756,7 +817,8 @@ const rPresets = {
   large:  { sizes: [60, 120, 200], sides: [6, 7, 8, 9], trials: 1 },
 };
 
-let cmpChart, timeChart, routeChart, routeBar;
+let cmpChart, timeChart, routeChart, routeBar, gPie, dPie;
+const PIE_COLORS = ["#d4a54a","#6ea8d8","#5fbf7a","#e07a5f","#a78bfa","#34d399","#f59e0b","#60a5fa","#f472b6","#94a3b8"];
 let runId1 = 0, runId2 = 0;
 let currentR = rPresets.small;
 let p2Loaded = false;
@@ -840,6 +902,19 @@ function mkCharts1(){
     },
     options:{ ...axis, plugins:{ legend:{ display:false } } }
   });
+  const pieOpt = {
+    plugins:{ legend:{ position:"bottom", labels:{ color:"#c9d4ca", boxWidth:10, font:{ size:10 } } } }
+  };
+  gPie = new Chart(document.getElementById("gPie"), {
+    type:"doughnut",
+    data:{ labels:[], datasets:[{ data:[], backgroundColor: PIE_COLORS }] },
+    options: pieOpt
+  });
+  dPie = new Chart(document.getElementById("dPie"), {
+    type:"doughnut",
+    data:{ labels:[], datasets:[{ data:[], backgroundColor: PIE_COLORS }] },
+    options: pieOpt
+  });
 }
 
 function rows(list){
@@ -852,6 +927,68 @@ function rows(list){
       <td>${money(p.spent)}</td>
       <td>${money(p.got)}</td>
     </tr>`).join("");
+}
+
+function fillPie(chart, picks){
+  const top = picks.slice(0, 8);
+  chart.data.labels = top.map(p => p.ticker + (p.frac ? " (slice)" : ""));
+  chart.data.datasets[0].data = top.map(p => p.got);
+  chart.update();
+}
+
+function renderMarket(d){
+  const gSet = new Set(d.greedy.picks.map(p => p.ticker));
+  const dSet = new Set(d.dp.picks.map(p => p.ticker));
+  const fracSet = new Set(d.greedy.picks.filter(p => p.frac).map(p => p.ticker));
+  const dens = (d.market || []).map(s => s.density);
+  const lo = Math.min(...dens), hi = Math.max(...dens);
+  const grid = document.getElementById("marketGrid");
+  grid.innerHTML = (d.market || []).map(s => {
+    const t = (s.density - lo) / Math.max(1e-9, hi - lo);
+    const bg = `rgba(212,165,74,${0.08 + 0.35*t})`;
+    let cls = "stock-tile";
+    if(gSet.has(s.ticker) && dSet.has(s.ticker)) cls += " pick-both";
+    else if(gSet.has(s.ticker)) cls += " pick-g";
+    else if(dSet.has(s.ticker)) cls += " pick-d";
+    if(fracSet.has(s.ticker)) cls += " frac-tile";
+    return `<div class="${cls}" style="background:${bg}" title="profit/dollar ${s.density}">
+      <b>${s.ticker}</b>
+      <span class="muted">$${s.cost}</span><br>
+      <span class="muted">profit $${s.profit}</span><br>
+      <span>value ${s.density.toFixed(3)}</span>
+    </div>`;
+  }).join("");
+}
+
+function animateCarts(d){
+  const gCart = document.getElementById("gCart");
+  const dCart = document.getElementById("dCart");
+  gCart.innerHTML = "";
+  dCart.innerHTML = "";
+  document.getElementById("gWallet").style.width = "0%";
+  document.getElementById("dWallet").style.width = "0%";
+
+  const gPct = Math.min(100, 100 * d.greedy.spent / Math.max(1, d.budget));
+  const dPct = Math.min(100, 100 * d.dp.spent / Math.max(1, d.budget));
+  requestAnimationFrame(() => {
+    document.getElementById("gWallet").style.width = gPct + "%";
+    document.getElementById("dWallet").style.width = dPct + "%";
+  });
+
+  d.greedy.picks.forEach((p, i) => {
+    const chip = document.createElement("span");
+    chip.className = "cart-chip g" + (p.frac ? " frac" : "");
+    chip.textContent = p.frac ? `${p.ticker} ${Math.round(p.qty*100)}%` : p.ticker;
+    gCart.appendChild(chip);
+    setTimeout(() => chip.classList.add("show"), 90 * i);
+  });
+  d.dp.picks.forEach((p, i) => {
+    const chip = document.createElement("span");
+    chip.className = "cart-chip d";
+    chip.textContent = p.ticker;
+    dCart.appendChild(chip);
+    setTimeout(() => chip.classList.add("show"), 90 * i);
+  });
 }
 
 function paint1(d){
@@ -883,8 +1020,13 @@ function paint1(d){
   cmpChart.update();
   timeChart.data.datasets[0].data = [d.greedy.ms, d.dp.ms];
   timeChart.update();
+  fillPie(gPie, d.greedy.picks);
+  fillPie(dPie, d.dp.picks);
   document.getElementById("gBody").innerHTML = rows(d.greedy.picks);
   document.getElementById("dBody").innerHTML = rows(d.dp.picks);
+
+  renderMarket(d);
+  animateCarts(d);
 
   const onlyG = d.diff.only_greedy, onlyD = d.diff.only_dp, both = d.diff.both;
   document.getElementById("diffBox").innerHTML = `
@@ -1331,10 +1473,23 @@ def compare():
     if only_g or only_d:
         note += " The lists below highlight where their baskets differ."
 
+    # board shows best-value stocks first (cap so the UI stays readable)
+    market = sorted(stocks, key=lambda s: s["density"], reverse=True)[:24]
+    market = [
+        {
+            "ticker": s["ticker"],
+            "cost": s["cost"],
+            "profit": s["profit"],
+            "density": s["density"],
+        }
+        for s in market
+    ]
+
     return jsonify({
         "budget": budget,
         "n": n,
         "seed": seed,
+        "market": market,
         "greedy": {
             "profit": g_profit, "spent": g_spent, "ms": round(g_ms, 4),
             "picks": g_picks, "has_frac": has_frac,
