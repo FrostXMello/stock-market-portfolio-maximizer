@@ -168,6 +168,11 @@ PAGE = r"""
   .why{margin-top:10px;color:var(--muted);font-size:.84rem;line-height:1.45}
   .two-tables{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:800px){.two-tables{grid-template-columns:1fr}}
+  .status{
+    margin-top:10px;padding:10px 12px;border-radius:10px;font-size:.86rem;
+    background:#101612;border:1px dashed var(--line);color:var(--muted)
+  }
+  .status b{color:var(--text)}
 </style>
 </head>
 <body>
@@ -175,31 +180,32 @@ PAGE = r"""
   <h1>Portfolio Maximizer</h1>
   <p class="sub">
     Same fake stocks + same budget. Greedy can buy a <b>slice</b> of a share.
-    DP only buys <b>whole</b> shares. Tap a preset, hit compare — that’s it.
+    DP only buys <b>whole</b> shares. Tap any option — it re-runs automatically.
   </p>
 
   <div class="panel controls">
     <div class="row">
       <span class="lbl">Preset</span>
-      <button class="chip on" data-preset="quick">Quick look</button>
-      <button class="chip" data-preset="class">Class demo</button>
-      <button class="chip" data-preset="tight">Tight budget</button>
+      <button type="button" class="chip on" data-preset="quick">Quick look</button>
+      <button type="button" class="chip" data-preset="class">Class demo</button>
+      <button type="button" class="chip" data-preset="tight">Tight budget</button>
     </div>
     <div class="row">
       <span class="lbl">Budget</span>
-      <button class="chip bud" data-b="800">$800</button>
-      <button class="chip bud on" data-b="1500">$1,500</button>
-      <button class="chip bud" data-b="3000">$3,000</button>
-      <button class="chip bud" data-b="8000">$8,000</button>
+      <button type="button" class="chip bud" data-b="800">$800</button>
+      <button type="button" class="chip bud on" data-b="1500">$1,500</button>
+      <button type="button" class="chip bud" data-b="3000">$3,000</button>
+      <button type="button" class="chip bud" data-b="8000">$8,000</button>
     </div>
     <div class="row">
       <span class="lbl">Stocks</span>
-      <button class="chip stk" data-n="12">12</button>
-      <button class="chip stk on" data-n="20">20</button>
-      <button class="chip stk" data-n="35">35</button>
-      <button class="chip stk" data-n="50">50</button>
-      <button class="go" id="go">Compare greedy vs DP</button>
+      <button type="button" class="chip stk" data-n="12">12</button>
+      <button type="button" class="chip stk on" data-n="20">20</button>
+      <button type="button" class="chip stk" data-n="35">35</button>
+      <button type="button" class="chip stk" data-n="50">50</button>
+      <button type="button" class="go" id="go">Compare greedy vs DP</button>
     </div>
+    <div class="status" id="status">Showing results for: <b>—</b></div>
     <div class="err" id="err"></div>
   </div>
 
@@ -274,8 +280,8 @@ const presets = {
   tight:  { budget: 800,  n: 12 },
 };
 
-let budget = 1500, n = 20;
 let cmpChart, timeChart;
+let runId = 0;
 
 function money(x){ return "$" + Number(x).toLocaleString(undefined,{maximumFractionDigits:2}); }
 
@@ -284,20 +290,43 @@ function setOn(group, el){
   el.classList.add("on");
 }
 
+function selected(){
+  // always read whatever chip is lit — no stale JS vars
+  const bud = document.querySelector(".bud.on");
+  const stk = document.querySelector(".stk.on");
+  return {
+    budget: Number(bud && bud.dataset.b),
+    n: Number(stk && stk.dataset.n),
+    seed: 42,
+  };
+}
+
+function syncChips(budget, n){
+  document.querySelectorAll(".bud").forEach(b => b.classList.toggle("on", Number(b.dataset.b) === budget));
+  document.querySelectorAll(".stk").forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
+}
+
 document.querySelectorAll("[data-preset]").forEach(btn => {
-  btn.onclick = () => {
+  btn.addEventListener("click", () => {
     setOn("[data-preset]", btn);
     const p = presets[btn.dataset.preset];
-    budget = p.budget; n = p.n;
-    document.querySelectorAll(".bud").forEach(b => b.classList.toggle("on", Number(b.dataset.b) === budget));
-    document.querySelectorAll(".stk").forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
-  };
+    syncChips(p.budget, p.n);
+    run();
+  });
 });
 document.querySelectorAll(".bud").forEach(btn => {
-  btn.onclick = () => { setOn(".bud", btn); budget = Number(btn.dataset.b); };
+  btn.addEventListener("click", () => {
+    setOn(".bud", btn);
+    document.querySelectorAll("[data-preset]").forEach(b => b.classList.remove("on"));
+    run();
+  });
 });
 document.querySelectorAll(".stk").forEach(btn => {
-  btn.onclick = () => { setOn(".stk", btn); n = Number(btn.dataset.n); };
+  btn.addEventListener("click", () => {
+    setOn(".stk", btn);
+    document.querySelectorAll("[data-preset]").forEach(b => b.classList.remove("on"));
+    run();
+  });
 });
 
 function mkCharts(){
@@ -342,6 +371,10 @@ function rows(list){
 }
 
 function paint(d){
+  document.getElementById("status").innerHTML =
+    `Showing results for: <b>${money(d.budget)}</b> budget · <b>${d.n}</b> stocks · ` +
+    `<b>${d.greedy.picks.length}</b> greedy picks · <b>${d.dp.picks.length}</b> DP picks`;
+
   document.getElementById("gProfit").textContent = money(d.greedy.profit);
   document.getElementById("dProfit").textContent = money(d.dp.profit);
   document.getElementById("gSpent").textContent = money(d.greedy.spent);
@@ -393,33 +426,56 @@ function paint(d){
 async function run(){
   const btn = document.getElementById("go");
   const err = document.getElementById("err");
+  const opts = selected();
+  if(!opts.budget || !opts.n){
+    err.textContent = "pick a budget and stock count first";
+    return;
+  }
+  const myId = ++runId;
   err.textContent = "";
   btn.disabled = true;
   btn.textContent = "Comparing…";
+  document.getElementById("status").innerHTML =
+    `Running <b>${money(opts.budget)}</b> · <b>${opts.n}</b> stocks…`;
   try{
-    const res = await fetch("/api/compare", {
+    const res = await fetch("/api/compare?t=" + Date.now(), {
       method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ budget, n, seed: 42 })
+      headers:{
+        "Content-Type":"application/json",
+        "Cache-Control":"no-store",
+      },
+      cache: "no-store",
+      body: JSON.stringify(opts)
     });
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || "failed");
+    // ignore outdated responses if user clicked fast
+    if(myId !== runId) return;
     paint(data);
   }catch(e){
-    err.textContent = e.message;
+    if(myId === runId) err.textContent = e.message;
   }finally{
-    btn.disabled = false;
-    btn.textContent = "Compare greedy vs DP";
+    if(myId === runId){
+      btn.disabled = false;
+      btn.textContent = "Compare greedy vs DP";
+    }
   }
 }
 
 mkCharts();
-document.getElementById("go").onclick = run;
+document.getElementById("go").addEventListener("click", run);
 run();
 </script>
 </body>
 </html>
 """
+
+
+@app.after_request
+def no_cache(resp):
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.get("/")
@@ -481,6 +537,7 @@ def compare():
     return jsonify({
         "budget": budget,
         "n": n,
+        "seed": seed,
         "greedy": {
             "profit": g_profit,
             "spent": g_spent,
