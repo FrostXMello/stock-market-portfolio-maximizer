@@ -148,17 +148,26 @@ def rebuild_path(parent, target):
     return path
 
 
+_DISTRICTS = [
+    "Harbor", "Midtown", "Heights", "Market", "Campus",
+    "Airport", "Oldtown", "Riverside", "Parkside", "Station",
+]
+
+
 def layout_nodes(V, seed):
-    """Put cities on a ring with a little jitter so the map feels organic."""
+    """City-block style layout: neighborhoods on a grid with a bit of jitter."""
     rng = random.Random(seed + 99)
+    cols = max(3, int(math.ceil(math.sqrt(V))))
+    rows = max(3, int(math.ceil(V / cols)))
     nodes = []
     for i in range(V):
-        ang = (2 * math.pi * i / V) - math.pi / 2
-        rad = 0.38 + rng.uniform(-0.04, 0.04)
+        r, c = divmod(i, cols)
+        district = _DISTRICTS[i % len(_DISTRICTS)]
         nodes.append({
             "id": i,
-            "x": 0.5 + rad * math.cos(ang),
-            "y": 0.5 + rad * math.sin(ang),
+            "name": f"{district} {i}",
+            "x": (c + 0.5 + rng.uniform(-0.22, 0.22)) / cols,
+            "y": (r + 0.5 + rng.uniform(-0.22, 0.22)) / rows,
         })
     return nodes
 
@@ -200,6 +209,7 @@ PAGE = r"""
 <title>DAA Projects</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
 <style>
   :root {
     --bg:#10140f; --panel:#1a221c; --line:#2f3d33; --text:#e8efe6; --muted:#9aab9c;
@@ -302,15 +312,17 @@ PAGE = r"""
   .map-wrap{margin-bottom:14px}
   .map-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
   .map-top h3{margin:0;font-size:1rem;flex:1}
-  #mapCanvas{
-    width:100%;height:min(520px,70vw);display:block;border-radius:12px;
-    background:#0c100e;border:1px solid var(--line)
+  #cyMap{
+    width:100%;height:min(560px,75vw);border-radius:12px;
+    background:linear-gradient(160deg,#0b1220 0%,#101a14 55%,#0d1518 100%);
+    border:1px solid var(--line); overflow:hidden
   }
   .map-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:.8rem;color:var(--muted)}
   .map-legend i{
     display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle
   }
   .swatch{display:inline-block;width:18px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}
+  .lib-credit{font-size:.72rem;color:#6f7f72;margin-top:6px}
 </style>
 </head>
 <body>
@@ -501,20 +513,21 @@ PAGE = r"""
 
     <div class="panel map-wrap">
       <div class="map-top">
-        <h3>Watch the map grow &amp; the route light up</h3>
+        <h3>City network · watch it grow &amp; pick a route</h3>
         <button type="button" class="chip" id="mapPrev">◀ smaller</button>
         <button type="button" class="chip on" id="mapPlay">▶ play growth</button>
         <button type="button" class="chip" id="mapNext">bigger ▶</button>
       </div>
-      <canvas id="mapCanvas" width="1000" height="620"></canvas>
+      <div id="cyMap"></div>
       <div class="map-legend">
-        <span><i style="background:#5fbf7a"></i>Start (city 0)</span>
-        <span><i style="background:#e07a5f"></i>Destination</span>
-        <span><span class="swatch" style="background:#2f3d33"></span>Roads</span>
-        <span><span class="swatch" style="background:#d4a54a"></span>Explored so far</span>
-        <span><span class="swatch" style="background:#6ea8d8"></span>Chosen shortest route</span>
+        <span><i style="background:#3dd68c"></i>Start</span>
+        <span><i style="background:#ff6b6b"></i>Destination</span>
+        <span><span class="swatch" style="background:#3d4f5f"></span>City roads</span>
+        <span><span class="swatch" style="background:#f0c14b"></span>Explored</span>
+        <span><span class="swatch" style="background:#4cc9f0"></span>Shortest route</span>
       </div>
-      <p class="legend-note" id="mapCaption">Run a speed test to draw the maps.</p>
+      <p class="legend-note" id="mapCaption">Run a speed test to draw the city network.</p>
+      <p class="lib-credit">Map drawn with <b>Cytoscape.js</b> — popular open-source network visualization library (MIT).</p>
     </div>
 
     <div class="three">
@@ -791,6 +804,8 @@ let mapIndex = 0;
 let mapTimer = null;
 let animTimer = null;
 let animStep = 0;
+let cy = null;
+const MAP_W = 900, MAP_H = 560;
 
 function stopMapPlay(){
   if(mapTimer){ clearInterval(mapTimer); mapTimer = null; }
@@ -801,121 +816,180 @@ function stopAnim(){
   if(animTimer){ clearInterval(animTimer); animTimer = null; }
 }
 
-function drawMap(m, exploredCount){
-  const canvas = document.getElementById("mapCanvas");
-  if(!canvas || !m) return;
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width, H = canvas.height;
-  ctx.clearRect(0,0,W,H);
-
-  // soft vignette background
-  const g = ctx.createRadialGradient(W*0.5,H*0.5,40,W*0.5,H*0.5,W*0.55);
-  g.addColorStop(0,"#152019"); g.addColorStop(1,"#0c100e");
-  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
-
-  const pad = 36;
-  const pos = {};
+function cityElements(m){
+  const els = [];
   m.nodes.forEach(n => {
-    pos[n.id] = {
-      x: pad + n.x * (W - pad*2),
-      y: pad + n.y * (H - pad*2),
-    };
+    els.push({
+      group: "nodes",
+      data: {
+        id: "n" + n.id,
+        label: m.V <= 36 ? (n.name || ("City " + n.id)) : String(n.id),
+        raw: n.id,
+      },
+      position: { x: 40 + n.x * (MAP_W - 80), y: 40 + n.y * (MAP_H - 80) },
+    });
+  });
+  m.edges.forEach((e, i) => {
+    els.push({
+      group: "edges",
+      data: {
+        id: "e" + i,
+        source: "n" + e.u,
+        target: "n" + e.v,
+        weight: e.w,
+        key: e.u + ">" + e.v,
+      },
+    });
+  });
+  return els;
+}
+
+function ensureCy(m){
+  const box = document.getElementById("cyMap");
+  if(cy){ cy.destroy(); cy = null; }
+  cy = cytoscape({
+    container: box,
+    elements: cityElements(m),
+    layout: { name: "preset", fit: true, padding: 28 },
+    minZoom: 0.4,
+    maxZoom: 2.5,
+    wheelSensitivity: 0.25,
+    style: [
+      {
+        selector: "node",
+        style: {
+          "background-color": "#2a3a48",
+          "border-width": 2,
+          "border-color": "#6f8799",
+          "label": "data(label)",
+          "color": "#d7e0e8",
+          "font-size": m.V > 50 ? 0 : 10,
+          "font-family": "IBM Plex Sans, sans-serif",
+          "text-valign": "top",
+          "text-margin-y": -6,
+          "width": m.V > 80 ? 10 : m.V > 40 ? 16 : 22,
+          "height": m.V > 80 ? 10 : m.V > 40 ? 16 : 22,
+          "overlay-opacity": 0,
+        }
+      },
+      {
+        selector: "edge",
+        style: {
+          "width": 1.5,
+          "line-color": "#3d4f5f",
+          "target-arrow-color": "#3d4f5f",
+          "target-arrow-shape": "triangle",
+          "curve-style": "bezier",
+          "arrow-scale": 0.7,
+          "opacity": 0.75,
+        }
+      },
+      {
+        selector: "node.explored",
+        style: { "background-color": "#f0c14b", "border-color": "#ffe08a" }
+      },
+      {
+        selector: "edge.explored",
+        style: { "line-color": "#c9a227", "target-arrow-color": "#c9a227", "width": 2, "opacity": 0.9 }
+      },
+      {
+        selector: "node.path",
+        style: { "background-color": "#4cc9f0", "border-color": "#9be7ff", "width": 26, "height": 26 }
+      },
+      {
+        selector: "edge.path",
+        style: {
+          "line-color": "#4cc9f0",
+          "target-arrow-color": "#4cc9f0",
+          "width": 5,
+          "opacity": 1,
+          "z-index": 99,
+        }
+      },
+      {
+        selector: "node.start",
+        style: {
+          "background-color": "#3dd68c",
+          "border-color": "#b6f5d3",
+          "width": 34, "height": 34,
+          "label": "START",
+          "font-size": 11,
+          "font-weight": 700,
+          "color": "#3dd68c",
+        }
+      },
+      {
+        selector: "node.end",
+        style: {
+          "background-color": "#ff6b6b",
+          "border-color": "#ffc2c2",
+          "width": 34, "height": 34,
+          "label": "END",
+          "font-size": 11,
+          "font-weight": 700,
+          "color": "#ff6b6b",
+        }
+      },
+    ],
+  });
+}
+
+function styleProgress(m, exploredCount){
+  if(!cy) return;
+  const explored = new Set((m.visit_order || []).slice(0, exploredCount));
+  const showPath = exploredCount >= (m.visit_order || []).length;
+  const pathSet = new Set(m.path || []);
+  const pathEdges = new Set();
+  for(let i=1;i<(m.path||[]).length;i++){
+    pathEdges.add(m.path[i-1] + ">" + m.path[i]);
+  }
+
+  cy.batch(() => {
+    cy.nodes().forEach(n => {
+      const id = n.data("raw");
+      n.removeClass("explored path start end");
+      if(id === m.source) n.addClass("start");
+      else if(id === m.target) n.addClass("end");
+      else if(showPath && pathSet.has(id)) n.addClass("path");
+      else if(explored.has(id)) n.addClass("explored");
+    });
+    cy.edges().forEach(e => {
+      e.removeClass("explored path");
+      const key = e.data("key");
+      const u = Number(e.data("source").slice(1));
+      const v = Number(e.data("target").slice(1));
+      if(showPath && pathEdges.has(key)) e.addClass("path");
+      else if(explored.has(u) && explored.has(v)) e.addClass("explored");
+    });
   });
 
-  const explored = new Set((m.visit_order || []).slice(0, exploredCount));
-  const pathSet = new Set();
-  const pathEdges = new Set();
-  for(let i=0;i<(m.path||[]).length;i++){
-    pathSet.add(m.path[i]);
-    if(i>0) pathEdges.add(m.path[i-1] + ">" + m.path[i]);
-  }
-  const showPath = exploredCount >= (m.visit_order||[]).length;
-
-  // roads
-  for(const e of m.edges){
-    const a = pos[e.u], b = pos[e.v];
-    if(!a || !b) continue;
-    const onPath = showPath && pathEdges.has(e.u + ">" + e.v);
-    const hot = explored.has(e.u) && explored.has(e.v);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    if(onPath){
-      ctx.strokeStyle = "#6ea8d8";
-      ctx.lineWidth = 3.2;
-      ctx.globalAlpha = 1;
-    } else if(hot){
-      ctx.strokeStyle = "#d4a54a";
-      ctx.lineWidth = 1.4;
-      ctx.globalAlpha = 0.55;
-    } else {
-      ctx.strokeStyle = "#2f3d33";
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.45;
-    }
-    ctx.stroke();
-    // tiny arrow head
-    if(m.V <= 80){
-      const ang = Math.atan2(b.y-a.y, b.x-a.x);
-      const mx = a.x*0.35 + b.x*0.65, my = a.y*0.35 + b.y*0.65;
-      ctx.beginPath();
-      ctx.moveTo(mx, my);
-      ctx.lineTo(mx - 6*Math.cos(ang-0.35), my - 6*Math.sin(ang-0.35));
-      ctx.lineTo(mx - 6*Math.cos(ang+0.35), my - 6*Math.sin(ang+0.35));
-      ctx.closePath();
-      ctx.globalAlpha = onPath ? 0.95 : 0.35;
-      ctx.fillStyle = onPath ? "#6ea8d8" : "#9aab9c";
-      ctx.fill();
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  // cities
-  const r = m.V > 120 ? 2.2 : m.V > 60 ? 3.2 : 5;
-  for(const n of m.nodes){
-    const p = pos[n.id];
-    const isStart = n.id === m.source;
-    const isEnd = n.id === m.target;
-    const seen = explored.has(n.id);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, isStart||isEnd ? r+2.5 : r, 0, Math.PI*2);
-    if(isStart) ctx.fillStyle = "#5fbf7a";
-    else if(isEnd) ctx.fillStyle = "#e07a5f";
-    else if(showPath && pathSet.has(n.id)) ctx.fillStyle = "#6ea8d8";
-    else if(seen) ctx.fillStyle = "#d4a54a";
-    else ctx.fillStyle = "#4a5a50";
-    ctx.fill();
-    if(m.V <= 40 && (isStart || isEnd || (showPath && pathSet.has(n.id)))){
-      ctx.fillStyle = "#e8efe6";
-      ctx.font = "11px IBM Plex Sans, sans-serif";
-      ctx.fillText(String(n.id), p.x + 7, p.y - 7);
-    }
-  }
-
   const hops = Math.max(0, (m.path||[]).length - 1);
+  const startName = (m.nodes.find(n => n.id === m.source) || {}).name || ("City " + m.source);
+  const endName = (m.nodes.find(n => n.id === m.target) || {}).name || ("City " + m.target);
   document.getElementById("mapCaption").innerHTML =
-    `<b>${m.V}</b> cities · <b>${m.E}</b> roads · route ` +
-    `<b>${m.source}</b> → <b>${m.target}</b> · ` +
-    (m.dist==null ? "unreachable" : `distance <b>${m.dist}</b> · <b>${hops}</b> hops`) +
-    (showPath ? " · blue path = shortest route found" : " · exploring…");
+    `<b>${m.V}</b> junctions · <b>${m.E}</b> one-way roads · ` +
+    `<b>${startName}</b> → <b>${endName}</b> · ` +
+    (m.dist==null ? "unreachable" : `travel cost <b>${m.dist}</b> · <b>${hops}</b> hops`) +
+    (showPath ? " · cyan = shortest route" : " · exploring the city…");
 }
 
 function playExplore(m){
   stopAnim();
+  ensureCy(m);
   animStep = 0;
   const total = (m.visit_order || []).length;
-  const stepEvery = Math.max(16, Math.min(80, 1400 / Math.max(1,total)));
+  const stepEvery = Math.max(20, Math.min(90, 1600 / Math.max(1,total)));
+  styleProgress(m, 0);
   animTimer = setInterval(() => {
-    animStep += Math.max(1, Math.floor(total / 40));
+    animStep += Math.max(1, Math.floor(total / 35));
     if(animStep >= total){
       animStep = total;
-      drawMap(m, animStep);
+      styleProgress(m, animStep);
       stopAnim();
       return;
     }
-    drawMap(m, animStep);
+    styleProgress(m, animStep);
   }, stepEvery);
-  drawMap(m, 0);
 }
 
 function showMapAt(i, animate=true){
@@ -925,7 +999,8 @@ function showMapAt(i, animate=true){
   if(animate) playExplore(m);
   else {
     stopAnim();
-    drawMap(m, (m.visit_order||[]).length);
+    ensureCy(m);
+    styleProgress(m, (m.visit_order||[]).length);
   }
 }
 
@@ -1158,16 +1233,16 @@ def routing():
             "bf_ms": round(sum(bf_times) / trials, 4),
         })
 
-        # keep drawings readable — for huge V, build a smaller twin map for the canvas
-        if V <= 120:
+        # Cytoscape stays snappy under ~90 nodes; bigger benches get a twin preview map
+        if V <= 90:
             maps.append(build_map_view(graph, gseed, source))
         else:
-            vis_v = 80
+            vis_v = 64
             vis_graph = nr.generate_random_directed_graph(
                 vis_v, edge_factor * vis_v, seed=gseed
             )
             mv = build_map_view(vis_graph, gseed, source)
-            mv["note"] = f"Visual preview uses {vis_v} cities (full benchmark was V={V})."
+            mv["note"] = f"Visual preview uses {vis_v} junctions (full benchmark was V={V})."
             maps.append(mv)
 
     last = rows[-1]
