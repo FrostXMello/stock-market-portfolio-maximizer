@@ -185,180 +185,266 @@ PAGE = r"""
   .status b{color:var(--text)}
   .three{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
   @media(max-width:800px){.three{grid-template-columns:1fr}}
+  .howto{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 16px
+  }
+  @media(max-width:800px){.howto{grid-template-columns:1fr}}
+  .howto .step{
+    background:#141b16;border:1px solid var(--line);border-radius:12px;padding:12px 14px
+  }
+  .howto .num{
+    display:inline-block;width:22px;height:22px;border-radius:50%;
+    background:var(--gold);color:#1a1408;font-size:.75rem;font-weight:700;
+    text-align:center;line-height:22px;margin-right:6px
+  }
+  .howto strong{display:block;margin:6px 0 4px}
+  .howto p{margin:0;color:var(--muted);font-size:.82rem;line-height:1.4}
+  .explain{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px
+  }
+  .explain.three-col{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:900px){.explain,.explain.three-col{grid-template-columns:1fr}}
+  .explain .box{background:#141b16;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .explain h3{margin:0 0 6px;font-size:.95rem}
+  .explain p{margin:0;color:var(--muted);font-size:.84rem;line-height:1.45}
+  .tip{
+    margin:0 0 14px;padding:12px 14px;border-radius:12px;
+    background:rgba(212,165,74,.08);border:1px solid rgba(212,165,74,.35);
+    color:var(--text);font-size:.88rem;line-height:1.45
+  }
+  .tip b{color:var(--gold)}
+  .legend-note{color:var(--muted);font-size:.8rem;margin:6px 0 0;line-height:1.4}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>DAA Projects</h1>
-  <p class="sub">Two course projects in one place. Flip tabs — each one runs on its own.</p>
+  <p class="sub">
+    Two algorithm demos you can click through. Pick a project tab, tap a simple option,
+    and watch the results update — no coding needed.
+  </p>
 
   <div class="tabs">
     <button type="button" class="tab on" data-tab="p1">
-      Project 1
-      <small>Portfolio Maximizer · knapsack</small>
+      Project 1 · Investing
+      <small>Which stocks to buy with a budget?</small>
     </button>
     <button type="button" class="tab" data-tab="p2">
-      Project 2
-      <small>Network Routing · shortest paths</small>
+      Project 2 · Maps / Roads
+      <small>Which route-finding method is fastest?</small>
     </button>
   </div>
 
   <!-- ===================== PROJECT 1 ===================== -->
   <section id="tab-p1">
-    <p class="sub">
-      Same fake stocks + same budget. Greedy can buy a <b>slice</b> of a share.
-      DP only buys <b>whole</b> shares. Tap any option — it re-runs automatically.
-    </p>
+    <div class="tip">
+      <b>What this shows:</b> You have fake money and a list of fake stocks.
+      Two algorithms try to earn the most expected profit. They use <b>different rules</b>,
+      so their answers can differ — that’s the point.
+    </div>
+
+    <div class="howto">
+      <div class="step"><span class="num">1</span><strong>Pick how hard it is</strong><p>Start with “Quick look”. Change money or stock count if you want.</p></div>
+      <div class="step"><span class="num">2</span><strong>It runs by itself</strong><p>Every tap re-runs both algorithms on the same data.</p></div>
+      <div class="step"><span class="num">3</span><strong>Read the cards</strong><p>Gold = Greedy. Blue = Dynamic Programming. Middle number = profit gap.</p></div>
+    </div>
+
+    <div class="explain">
+      <div class="box">
+        <h3 class="gold">Greedy (fast &amp; flexible)</h3>
+        <p>Sorts stocks by “profit per dollar”, then buys the best ones first.
+        Allowed to buy a <b>fraction</b> of the last share if money runs out mid-buy.
+        Usually very fast.</p>
+      </div>
+      <div class="box">
+        <h3 class="blue">Dynamic Programming (strict)</h3>
+        <p>Only buys <b>whole</b> shares — all or nothing for each stock.
+        Checks combinations carefully for the best total under the budget.
+        Slower, but follows the stricter rule.</p>
+      </div>
+    </div>
+
     <div class="panel controls">
       <div class="row">
-        <span class="lbl">Preset</span>
+        <span class="lbl">Try this</span>
         <button type="button" class="chip on" data-preset="quick">Quick look</button>
-        <button type="button" class="chip" data-preset="class">Class demo</button>
-        <button type="button" class="chip" data-preset="tight">Tight budget</button>
+        <button type="button" class="chip" data-preset="class">Classroom demo</button>
+        <button type="button" class="chip" data-preset="tight">Tight money</button>
       </div>
       <div class="row">
-        <span class="lbl">Budget</span>
+        <span class="lbl">Your money</span>
         <button type="button" class="chip bud" data-b="800">$800</button>
         <button type="button" class="chip bud on" data-b="1500">$1,500</button>
         <button type="button" class="chip bud" data-b="3000">$3,000</button>
         <button type="button" class="chip bud" data-b="8000">$8,000</button>
       </div>
       <div class="row">
-        <span class="lbl">Stocks</span>
+        <span class="lbl"># of stocks</span>
         <button type="button" class="chip stk" data-n="12">12</button>
         <button type="button" class="chip stk on" data-n="20">20</button>
         <button type="button" class="chip stk" data-n="35">35</button>
         <button type="button" class="chip stk" data-n="50">50</button>
-        <button type="button" class="go" id="go1">Compare greedy vs DP</button>
+        <button type="button" class="go" id="go1">Run comparison</button>
       </div>
-      <div class="status" id="status1">Showing results for: <b>—</b></div>
+      <p class="legend-note">Tip: “Tight money” makes the difference easier to see, because leftover cash matters more.</p>
+      <div class="status" id="status1">Waiting to run…</div>
       <div class="err" id="err1"></div>
     </div>
 
     <div class="vs">
       <div class="panel card">
-        <h2 class="gold">Greedy</h2>
-        <div class="tag">Fractional knapsack · O(n log n)</div>
+        <h2 class="gold">Greedy result</h2>
+        <div class="tag">Can buy partial shares · usually fastest</div>
         <div class="big gold" id="gProfit">—</div>
         <div class="meta">
-          <div><span>Spent</span><b id="gSpent">—</b></div>
-          <div><span>Runtime</span><b id="gMs">—</b></div>
-          <div><span>Picks</span><b id="gCount">—</b></div>
-          <div><span>Fractional?</span><b id="gFrac">—</b></div>
+          <div><span>Money used</span><b id="gSpent">—</b></div>
+          <div><span>Time taken</span><b id="gMs">—</b></div>
+          <div><span>Stocks chosen</span><b id="gCount">—</b></div>
+          <div><span>Used a fraction?</span><b id="gFrac">—</b></div>
         </div>
       </div>
       <div class="mid">
         <div class="delta" id="delta">vs</div>
-        <div class="hint" id="deltaHint">profit gap</div>
+        <div class="hint" id="deltaHint">difference in expected profit</div>
         <div class="why" id="why"></div>
       </div>
       <div class="panel card">
-        <h2 class="blue">Dynamic (0/1)</h2>
-        <div class="tag">Whole shares only · O(nW)</div>
+        <h2 class="blue">DP result</h2>
+        <div class="tag">Whole shares only · slower but strict</div>
         <div class="big blue" id="dProfit">—</div>
         <div class="meta">
-          <div><span>Spent</span><b id="dSpent">—</b></div>
-          <div><span>Runtime</span><b id="dMs">—</b></div>
-          <div><span>Picks</span><b id="dCount">—</b></div>
-          <div><span>Fractional?</span><b>never</b></div>
+          <div><span>Money used</span><b id="dSpent">—</b></div>
+          <div><span>Time taken</span><b id="dMs">—</b></div>
+          <div><span>Stocks chosen</span><b id="dCount">—</b></div>
+          <div><span>Used a fraction?</span><b>no (not allowed)</b></div>
         </div>
       </div>
     </div>
 
     <div class="charts">
       <div class="panel chart-box">
-        <h3>Profit & spend side by side</h3>
+        <h3>How much profit &amp; cash each used</h3>
         <canvas id="cmpChart"></canvas>
+        <p class="legend-note">Taller profit bar = better expected return under that algorithm’s rules.</p>
       </div>
       <div class="panel chart-box">
-        <h3>Runtime (ms)</h3>
+        <h3>How long each took</h3>
         <canvas id="timeChart"></canvas>
+        <p class="legend-note">Lower is faster. Greedy is almost always quicker.</p>
       </div>
     </div>
 
     <div class="two-tables">
       <div class="panel">
-        <h3 style="margin:0 0 8px;font-size:.92rem" class="gold">What greedy bought</h3>
+        <h3 style="margin:0 0 8px;font-size:.92rem" class="gold">Greedy shopping list</h3>
+        <p class="legend-note" style="margin-top:0;margin-bottom:8px">“fraction” means it bought only part of that share.</p>
         <table>
-          <thead><tr><th>Ticker</th><th>Type</th><th>Qty</th><th>Spent</th><th>Profit</th></tr></thead>
+          <thead><tr><th>Stock</th><th>Buy type</th><th>Amount</th><th>Paid</th><th>Expected profit</th></tr></thead>
           <tbody id="gBody"></tbody>
         </table>
       </div>
       <div class="panel">
-        <h3 style="margin:0 0 8px;font-size:.92rem" class="blue">What DP bought</h3>
+        <h3 style="margin:0 0 8px;font-size:.92rem" class="blue">DP shopping list</h3>
+        <p class="legend-note" style="margin-top:0;margin-bottom:8px">Every row is a full share (no partial buys).</p>
         <table>
-          <thead><tr><th>Ticker</th><th>Type</th><th>Qty</th><th>Spent</th><th>Profit</th></tr></thead>
+          <thead><tr><th>Stock</th><th>Buy type</th><th>Amount</th><th>Paid</th><th>Expected profit</th></tr></thead>
           <tbody id="dBody"></tbody>
         </table>
       </div>
     </div>
 
     <div class="panel" style="margin-top:12px">
-      <h3 style="margin:0 0 8px;font-size:.92rem">Where they disagree</h3>
-      <div id="diffBox" class="why">Run a compare to see which tickers only one algorithm took.</div>
+      <h3 style="margin:0 0 8px;font-size:.92rem">Did they pick the same stocks?</h3>
+      <div id="diffBox" class="why">Run a comparison to see overlaps and differences.</div>
     </div>
   </section>
 
   <!-- ===================== PROJECT 2 ===================== -->
   <section id="tab-p2" class="hidden">
-    <p class="sub">
-      Fake road network (directed, sparse, E ≈ 3·V). Same graph for all three algorithms —
-      Dijkstra array, Dijkstra heap, Bellman-Ford. Tap a size preset to re-run.
-    </p>
+    <div class="tip">
+      <b>What this shows:</b> We build a fake map of one-way roads, then ask:
+      “from city 0, how fast can each algorithm compute shortest travel times to every city?”
+      All three should get the <b>same answers</b> — we compare <b>speed</b>, not correctness.
+    </div>
+
+    <div class="howto">
+      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Large shows the speed gap more clearly.</p></div>
+      <div class="step"><span class="num">2</span><strong>Watch the times</strong><p>Each method solves the same map. Lower milliseconds = faster.</p></div>
+      <div class="step"><span class="num">3</span><strong>Read who wins</strong><p>On sparse roads, the heap version of Dijkstra usually wins.</p></div>
+    </div>
+
+    <div class="explain three-col">
+      <div class="box">
+        <h3 class="gold">Dijkstra · array</h3>
+        <p>Each step searches the whole list for the next closest city. Simple idea, gets slower as the map grows (about V²).</p>
+      </div>
+      <div class="box">
+        <h3 class="blue">Dijkstra · heap</h3>
+        <p>Same Dijkstra idea, but uses a priority queue so “who’s next?” is cheap. Great for road-like sparse maps.</p>
+      </div>
+      <div class="box">
+        <h3 class="violet">Bellman-Ford</h3>
+        <p>Relaxes every road many times. Can handle weird negative weights (we don’t use those here). Usually slower on big maps.</p>
+      </div>
+    </div>
+
     <div class="panel controls">
       <div class="row">
-        <span class="lbl">Preset</span>
-        <button type="button" class="chip on" data-rpreset="small">Small</button>
+        <span class="lbl">Map size</span>
+        <button type="button" class="chip on" data-rpreset="small">Small (fast)</button>
         <button type="button" class="chip" data-rpreset="medium">Medium</button>
-        <button type="button" class="chip" data-rpreset="large">Large</button>
-        <button type="button" class="go" id="go2">Run routing benchmark</button>
+        <button type="button" class="chip" data-rpreset="large">Large (slower)</button>
+        <button type="button" class="go" id="go2">Run speed test</button>
       </div>
-      <div class="status" id="status2">Showing results for: <b>—</b></div>
+      <p class="legend-note">V = number of cities/junctions. E = number of one-way roads (about 3×V here).</p>
+      <div class="status" id="status2">Waiting to run…</div>
       <div class="err" id="err2"></div>
     </div>
 
     <div class="three">
       <div class="panel card">
-        <h2 class="gold">Dijkstra (array)</h2>
-        <div class="tag">O(V² + E) · scan for min each time</div>
+        <h2 class="gold">Array Dijkstra</h2>
+        <div class="tag">Simple scan · slower on big maps</div>
         <div class="big gold" id="rArray">—</div>
-        <div class="meta"><div><span>Last size mean</span><b id="rArrayNote">ms</b></div></div>
+        <div class="meta"><div><span>Time on biggest map</span><b id="rArrayNote">—</b></div></div>
       </div>
       <div class="panel card">
-        <h2 class="blue">Dijkstra (heap)</h2>
-        <div class="tag">O((V+E) log V) · binary heap</div>
+        <h2 class="blue">Heap Dijkstra</h2>
+        <div class="tag">Priority queue · usually the winner</div>
         <div class="big blue" id="rHeap">—</div>
-        <div class="meta"><div><span>Last size mean</span><b id="rHeapNote">ms</b></div></div>
+        <div class="meta"><div><span>Time on biggest map</span><b id="rHeapNote">—</b></div></div>
       </div>
       <div class="panel card">
         <h2 class="violet">Bellman-Ford</h2>
-        <div class="tag">O(V·E) · neg-cycle check</div>
+        <div class="tag">Checks all roads repeatedly</div>
         <div class="big violet" id="rBf">—</div>
-        <div class="meta"><div><span>Last size mean</span><b id="rBfNote">ms</b></div></div>
+        <div class="meta"><div><span>Time on biggest map</span><b id="rBfNote">—</b></div></div>
       </div>
     </div>
 
     <div class="charts">
       <div class="panel chart-box">
-        <h3>Runtime vs vertices</h3>
+        <h3>Time as the map gets bigger</h3>
         <canvas id="routeChart"></canvas>
+        <p class="legend-note">X-axis = cities (V). Y-axis = milliseconds. Steeper line = slows down faster.</p>
       </div>
       <div class="panel chart-box">
-        <h3>Winner at largest V</h3>
+        <h3>Final race (biggest map only)</h3>
         <canvas id="routeBar"></canvas>
+        <p class="legend-note">Shortest bar wins that round.</p>
       </div>
     </div>
 
     <div class="panel">
-      <h3 style="margin:0 0 8px;font-size:.92rem">Benchmark table</h3>
+      <h3 style="margin:0 0 8px;font-size:.92rem">Results table</h3>
       <table>
         <thead>
           <tr>
-            <th>V</th><th>E</th>
-            <th>Dijkstra array (ms)</th>
-            <th>Dijkstra heap (ms)</th>
+            <th>Cities (V)</th><th>Roads (E)</th>
+            <th>Array (ms)</th>
+            <th>Heap (ms)</th>
             <th>Bellman-Ford (ms)</th>
-            <th>Fastest</th>
+            <th>Winner</th>
           </tr>
         </thead>
         <tbody id="rBody"></tbody>
@@ -448,10 +534,10 @@ function mkCharts1(){
   cmpChart = new Chart(document.getElementById("cmpChart"), {
     type:"bar",
     data:{
-      labels:["Expected profit","Cash spent"],
+      labels:["Expected profit ($)","Money spent ($)"],
       datasets:[
         { label:"Greedy", data:[0,0], backgroundColor:"#d4a54a" },
-        { label:"DP", data:[0,0], backgroundColor:"#6ea8d8" },
+        { label:"DP (whole shares)", data:[0,0], backgroundColor:"#6ea8d8" },
       ]
     },
     options: axis
@@ -460,7 +546,7 @@ function mkCharts1(){
     type:"bar",
     data:{
       labels:["Greedy","DP"],
-      datasets:[{ label:"ms", data:[0,0], backgroundColor:["#d4a54a","#6ea8d8"] }]
+      datasets:[{ label:"milliseconds", data:[0,0], backgroundColor:["#d4a54a","#6ea8d8"] }]
     },
     options:{ ...axis, plugins:{ legend:{ display:false } } }
   });
@@ -480,8 +566,8 @@ function rows(list){
 
 function paint1(d){
   document.getElementById("status1").innerHTML =
-    `Showing results for: <b>${money(d.budget)}</b> budget · <b>${d.n}</b> stocks · ` +
-    `<b>${d.greedy.picks.length}</b> greedy picks · <b>${d.dp.picks.length}</b> DP picks`;
+    `Now showing: <b>${money(d.budget)}</b> to spend on <b>${d.n}</b> stocks. ` +
+    `Greedy bought <b>${d.greedy.picks.length}</b> · DP bought <b>${d.dp.picks.length}</b>.`;
   document.getElementById("gProfit").textContent = money(d.greedy.profit);
   document.getElementById("dProfit").textContent = money(d.dp.profit);
   document.getElementById("gSpent").textContent = money(d.greedy.spent);
@@ -490,14 +576,16 @@ function paint1(d){
   document.getElementById("dMs").textContent = d.dp.ms.toFixed(2) + " ms";
   document.getElementById("gCount").textContent = d.greedy.picks.length;
   document.getElementById("dCount").textContent = d.dp.picks.length;
-  document.getElementById("gFrac").textContent = d.greedy.has_frac ? "yes — last pick sliced" : "no";
+  document.getElementById("gFrac").textContent = d.greedy.has_frac ? "yes — last buy was partial" : "no — all full shares";
 
   const gap = d.greedy.profit - d.dp.profit;
   const el = document.getElementById("delta");
-  if (Math.abs(gap) < 0.01) { el.textContent = "≈ same $"; el.className = "delta green"; }
+  if (Math.abs(gap) < 0.01) { el.textContent = "≈ same"; el.className = "delta green"; }
   else if (gap > 0) { el.textContent = "+" + money(gap); el.className = "delta gold"; }
   else { el.textContent = money(gap); el.className = "delta blue"; }
-  document.getElementById("deltaHint").textContent = gap >= 0 ? "greedy profit ahead" : "DP profit ahead";
+  document.getElementById("deltaHint").textContent = gap >= 0
+    ? "Greedy earned more expected profit"
+    : "DP earned more expected profit";
   document.getElementById("why").innerHTML = d.blurb;
 
   cmpChart.data.datasets[0].data = [d.greedy.profit, d.greedy.spent];
@@ -510,9 +598,9 @@ function paint1(d){
 
   const onlyG = d.diff.only_greedy, onlyD = d.diff.only_dp, both = d.diff.both;
   document.getElementById("diffBox").innerHTML = `
-    <b class="green">${both.length}</b> tickers in both ·
-    <b class="gold">${onlyG.length}</b> only greedy (${onlyG.join(", ") || "—"}) ·
-    <b class="blue">${onlyD.length}</b> only DP (${onlyD.join(", ") || "—"})
+    <b class="green">${both.length}</b> stocks appear on both lists.
+    <b class="gold">${onlyG.length}</b> only on Greedy (${onlyG.join(", ") || "none"}).
+    <b class="blue">${onlyD.length}</b> only on DP (${onlyD.join(", ") || "none"}).
     <br><br>${d.diff.note}`;
 }
 
@@ -523,8 +611,8 @@ async function run1(){
   const myId = ++runId1;
   err.textContent = "";
   btn.disabled = true;
-  btn.textContent = "Comparing…";
-  document.getElementById("status1").innerHTML = `Running <b>${money(opts.budget)}</b> · <b>${opts.n}</b> stocks…`;
+  btn.textContent = "Working…";
+  document.getElementById("status1").innerHTML = `Running with <b>${money(opts.budget)}</b> and <b>${opts.n}</b> stocks…`;
   try{
     const res = await fetch("/api/compare?t=" + Date.now(), {
       method:"POST",
@@ -539,7 +627,7 @@ async function run1(){
   }catch(e){
     if(myId === runId1) err.textContent = e.message;
   }finally{
-    if(myId === runId1){ btn.disabled = false; btn.textContent = "Compare greedy vs DP"; }
+    if(myId === runId1){ btn.disabled = false; btn.textContent = "Run comparison"; }
   }
 }
 
@@ -565,18 +653,18 @@ function mkCharts2(){
     data:{
       labels:[],
       datasets:[
-        { label:"Dijkstra array", data:[], borderColor:"#d4a54a", tension:.25, pointRadius:4 },
-        { label:"Dijkstra heap", data:[], borderColor:"#6ea8d8", tension:.25, pointRadius:4 },
+        { label:"Array Dijkstra", data:[], borderColor:"#d4a54a", tension:.25, pointRadius:4 },
+        { label:"Heap Dijkstra", data:[], borderColor:"#6ea8d8", tension:.25, pointRadius:4 },
         { label:"Bellman-Ford", data:[], borderColor:"#a78bfa", tension:.25, pointRadius:4 },
       ]
     },
-    options:{ ...axis, scales:{ ...axis.scales, y:{ ...axis.scales.y, title:{ display:true, text:"ms", color:"#9aab9c" } } } }
+    options:{ ...axis, scales:{ ...axis.scales, y:{ ...axis.scales.y, title:{ display:true, text:"time (ms)", color:"#9aab9c" } } } }
   });
   routeBar = new Chart(document.getElementById("routeBar"), {
     type:"bar",
     data:{
       labels:["Array","Heap","Bellman-Ford"],
-      datasets:[{ data:[0,0,0], backgroundColor:["#d4a54a","#6ea8d8","#a78bfa"] }]
+      datasets:[{ label:"ms", data:[0,0,0], backgroundColor:["#d4a54a","#6ea8d8","#a78bfa"] }]
     },
     options:{ ...axis, plugins:{ legend:{ display:false } } }
   });
@@ -586,15 +674,16 @@ function paint2(d){
   p2Loaded = true;
   const last = d.rows[d.rows.length - 1];
   document.getElementById("status2").innerHTML =
-    `Showing results for: V up to <b>${last.V}</b> · E ≈ <b>${last.E}</b> · trials <b>${d.trials}</b>`;
+    `Now showing maps up to <b>${last.V}</b> cities and about <b>${last.E}</b> roads ` +
+    `(averaged over <b>${d.trials}</b> run${d.trials>1?"s":""}).`;
   document.getElementById("rArray").textContent = last.array_ms.toFixed(2) + " ms";
   document.getElementById("rHeap").textContent = last.heap_ms.toFixed(2) + " ms";
   document.getElementById("rBf").textContent = last.bf_ms.toFixed(2) + " ms";
-  document.getElementById("rArrayNote").textContent = "at V=" + last.V;
-  document.getElementById("rHeapNote").textContent = "at V=" + last.V;
-  document.getElementById("rBfNote").textContent = "at V=" + last.V;
+  document.getElementById("rArrayNote").textContent = last.V + " cities";
+  document.getElementById("rHeapNote").textContent = last.V + " cities";
+  document.getElementById("rBfNote").textContent = last.V + " cities";
 
-  routeChart.data.labels = d.rows.map(r => r.V);
+  routeChart.data.labels = d.rows.map(r => r.V + " cities");
   routeChart.data.datasets[0].data = d.rows.map(r => r.array_ms);
   routeChart.data.datasets[1].data = d.rows.map(r => r.heap_ms);
   routeChart.data.datasets[2].data = d.rows.map(r => r.bf_ms);
@@ -605,7 +694,7 @@ function paint2(d){
   document.getElementById("rBody").innerHTML = d.rows.map(r => {
     const times = { array: r.array_ms, heap: r.heap_ms, bf: r.bf_ms };
     const best = Object.entries(times).sort((a,b)=>a[1]-b[1])[0][0];
-    const label = best === "array" ? "array" : best === "heap" ? "heap" : "Bellman-Ford";
+    const label = best === "array" ? "Array" : best === "heap" ? "Heap" : "Bellman-Ford";
     return `<tr>
       <td>${r.V}</td><td>${r.E}</td>
       <td>${r.array_ms.toFixed(3)}</td>
@@ -624,8 +713,9 @@ async function run2(){
   const myId = ++runId2;
   err.textContent = "";
   btn.disabled = true;
-  btn.textContent = "Benchmarking…";
-  document.getElementById("status2").innerHTML = `Running sizes <b>${currentR.sizes.join(", ")}</b>…`;
+  btn.textContent = "Working…";
+  document.getElementById("status2").innerHTML =
+    `Testing maps with <b>${currentR.sizes.join(", ")}</b> cities…`;
   try{
     const res = await fetch("/api/routing?t=" + Date.now(), {
       method:"POST",
@@ -640,7 +730,7 @@ async function run2(){
   }catch(e){
     if(myId === runId2) err.textContent = e.message;
   }finally{
-    if(myId === runId2){ btn.disabled = false; btn.textContent = "Run routing benchmark"; }
+    if(myId === runId2){ btn.disabled = false; btn.textContent = "Run speed test"; }
   }
 }
 
@@ -695,25 +785,30 @@ def compare():
     gap = round(g_profit - d_profit, 4)
 
     if has_frac and gap > 0.01:
+        frac_ticker = [p["ticker"] for p in g_picks if p["frac"]][0]
         blurb = (
-            f"Greedy edged ahead by {gap:.2f} because it sliced a share "
-            f"({[p['ticker'] for p in g_picks if p['frac']][0]}). "
-            "DP couldn’t take that leftover cash as a partial share."
+            f"In plain English: Greedy won by ${gap:.2f} because it bought a "
+            f"<b>slice</b> of {frac_ticker} with leftover cash. "
+            "DP refused that partial buy, so some money sat unused."
         )
     elif abs(gap) <= 0.01:
         blurb = (
-            "Profits landed nearly the same this round — still different rules: "
-            "greedy is allowed fractions, DP is not."
+            "In plain English: profits came out almost the same this time — "
+            "but the rules are still different (fractions vs whole shares only)."
         )
     else:
-        blurb = f"Gap is {gap:.2f}. Different pick sets can show up even when totals look close."
+        blurb = (
+            f"In plain English: the profit gap is ${abs(gap):.2f}. "
+            "Look at the shopping lists below to see which stocks each method chose."
+        )
 
     note = (
-        "Greedy sorts by profit-per-dollar and fills fast. "
-        "DP searches whole-share combos for the best total under the budget."
+        "Remember: this is fake market data for learning algorithms — not real investing advice. "
+        "Greedy = buy best value-per-dollar first (fractions OK). "
+        "DP = only whole shares, searching for the best combo."
     )
     if only_g or only_d:
-        note += " The ticker lists below show where the portfolios actually diverge."
+        note += " The lists below highlight where their baskets differ."
 
     return jsonify({
         "budget": budget,
@@ -780,11 +875,16 @@ def routing():
         [("array", last["array_ms"]), ("heap", last["heap_ms"]), ("bf", last["bf_ms"])],
         key=lambda x: x[1],
     )
-    winner = {"array": "Dijkstra (array)", "heap": "Dijkstra (heap)", "bf": "Bellman-Ford"}[order[0][0]]
+    winner = {
+        "array": "Array Dijkstra",
+        "heap": "Heap Dijkstra",
+        "bf": "Bellman-Ford",
+    }[order[0][0]]
     blurb = (
-        f"At V={last['V']} the fastest was <b>{winner}</b> "
-        f"({order[0][1]:.2f} ms). Heap Dijkstra usually wins on sparse roads; "
-        "Bellman-Ford grows roughly with V·E; array Dijkstra pays O(V²)."
+        f"In plain English: on the biggest map ({last['V']} cities), "
+        f"<b>{winner}</b> finished first at {order[0][1]:.2f} ms. "
+        "Same shortest-path answers — only the speed differs. "
+        "Heap Dijkstra is usually best on sparse road maps like these."
     )
 
     return jsonify({"trials": trials, "edge_factor": edge_factor, "rows": rows, "blurb": blurb})
