@@ -107,15 +107,27 @@ def timed(fn, runs=1):
     return ms, last
 
 
-def dijkstra_route(graph, source=0):
-    """Dijkstra with parents + visit order — used to draw the chosen route."""
+def rebuild_path(parent, target):
+    if target < 0 or target >= len(parent):
+        return []
+    path = []
+    cur = target
+    seen = set()
+    while cur != -1 and cur not in seen:
+        seen.add(cur)
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
+    return path
+
+
+def dijkstra_array_trace(graph, source=0):
     V = len(graph)
     dist = [float("inf")] * V
     parent = [-1] * V
     visited = [False] * V
     order = []
     dist[source] = 0.0
-
     for _ in range(V):
         u = -1
         best = float("inf")
@@ -134,18 +146,58 @@ def dijkstra_route(graph, source=0):
     return dist, parent, order
 
 
-def rebuild_path(parent, target):
-    if target < 0 or target >= len(parent):
-        return []
-    path = []
-    cur = target
+def dijkstra_heap_trace(graph, source=0):
+    import heapq
+
+    V = len(graph)
+    dist = [float("inf")] * V
+    parent = [-1] * V
+    order = []
     seen = set()
-    while cur != -1 and cur not in seen:
-        seen.add(cur)
-        path.append(cur)
-        cur = parent[cur]
-    path.reverse()
-    return path
+    dist[source] = 0.0
+    pq = [(0.0, source)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if u in seen:
+            continue
+        if d > dist[u]:
+            continue
+        seen.add(u)
+        order.append(u)
+        for v, w in graph[u]:
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                parent[v] = u
+                heapq.heappush(pq, (nd, v))
+    return dist, parent, order
+
+
+def bellman_ford_trace(graph, source=0):
+    V = len(graph)
+    dist = [float("inf")] * V
+    parent = [-1] * V
+    order = [source]
+    first_hit = {source: True}
+    dist[source] = 0.0
+    edges = [(u, v, w) for u in range(V) for (v, w) in graph[u]]
+    for _ in range(V - 1):
+        changed = False
+        for u, v, w in edges:
+            if dist[u] != float("inf") and dist[u] + w < dist[v]:
+                dist[v] = dist[u] + w
+                parent[v] = u
+                changed = True
+                if v not in first_hit:
+                    first_hit[v] = True
+                    order.append(v)
+        if not changed:
+            break
+    # append any leftover reachable nodes so animation can finish cleanly
+    for i, d in enumerate(dist):
+        if d != float("inf") and i not in first_hit:
+            order.append(i)
+    return dist, parent, order
 
 
 _DISTRICTS = [
@@ -173,20 +225,25 @@ def layout_nodes(V, seed):
 
 
 def build_map_view(graph, seed, source=0):
+    """Same city map for all 3 algorithms, each with its own explore order."""
     V = len(graph)
-    dist, parent, order = dijkstra_route(graph, source)
-    # pick a far-away reachable city as the destination
+    d_a, p_a, ord_a = dijkstra_array_trace(graph, source)
+    d_h, p_h, ord_h = dijkstra_heap_trace(graph, source)
+    d_b, p_b, ord_b = bellman_ford_trace(graph, source)
+
     target = source
     best = -1.0
-    for i, d in enumerate(dist):
+    for i, d in enumerate(d_a):
         if d != float("inf") and d > best:
             best = d
             target = i
-    path = rebuild_path(parent, target)
+
+    path = rebuild_path(p_a, target)
     edges = []
     for u in range(V):
         for v, w in graph[u]:
             edges.append({"u": u, "v": v, "w": w})
+
     return {
         "V": V,
         "E": len(edges),
@@ -194,9 +251,13 @@ def build_map_view(graph, seed, source=0):
         "target": target,
         "dist": None if best < 0 else round(best, 2),
         "path": path,
-        "visit_order": order,
         "nodes": layout_nodes(V, seed),
         "edges": edges,
+        "algos": {
+            "array": {"label": "Dijkstra (array)", "visit_order": ord_a, "path": rebuild_path(p_a, target)},
+            "heap": {"label": "Dijkstra (heap)", "visit_order": ord_h, "path": rebuild_path(p_h, target)},
+            "bf": {"label": "Bellman-Ford", "visit_order": ord_b, "path": rebuild_path(p_b, target)},
+        },
     }
 
 
@@ -312,8 +373,14 @@ PAGE = r"""
   .map-wrap{margin-bottom:14px}
   .map-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
   .map-top h3{margin:0;font-size:1rem;flex:1}
-  #cyMap{
-    width:100%;height:min(560px,75vw);border-radius:12px;
+  .map-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:10px
+  }
+  @media(max-width:1000px){.map-grid{grid-template-columns:1fr}}
+  .map-card{background:#0e1512;border:1px solid var(--line);border-radius:12px;padding:8px}
+  .map-card h4{margin:0 0 6px;font-size:.88rem}
+  .map-card .cy{
+    width:100%;height:min(340px,55vw);border-radius:10px;
     background:linear-gradient(160deg,#0b1220 0%,#101a14 55%,#0d1518 100%);
     border:1px solid var(--line); overflow:hidden
   }
@@ -471,16 +538,15 @@ PAGE = r"""
   <!-- ===================== PROJECT 2 ===================== -->
   <section id="tab-p2" class="hidden">
     <div class="tip">
-      <b>What this shows:</b> We build fake one-way road maps that get bigger.
-      Below you’ll <b>see the map grow</b>, watch cities get explored, then see the
-      <b>shortest route</b> from the green start to the coral destination.
-      The timing cards still compare which algorithm is fastest (answers match).
+      <b>What this shows:</b> One fake city road network is copied into <b>three panels</b> —
+      Array Dijkstra, Heap Dijkstra, and Bellman-Ford. Watch how each explores differently,
+      then lands on the same shortest route (cyan). Timing cards still crown the fastest.
     </div>
 
     <div class="howto">
-      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Large shows growth + speed gaps more clearly.</p></div>
-      <div class="step"><span class="num">2</span><strong>Watch the map</strong><p>Gold = explored. Blue line = route home. Use play to grow the map.</p></div>
-      <div class="step"><span class="num">3</span><strong>Check the race</strong><p>Same distances — different runtimes. Heap Dijkstra usually wins.</p></div>
+      <div class="step"><span class="num">1</span><strong>Pick a map size</strong><p>Small is instant. Larger sizes make explore-order differences obvious.</p></div>
+      <div class="step"><span class="num">2</span><strong>Watch all three</strong><p>Same roads everywhere. Gold = that algo’s explore order. Cyan = final route.</p></div>
+      <div class="step"><span class="num">3</span><strong>Check the race</strong><p>Routes should match; runtimes usually won’t. Heap Dijkstra often wins.</p></div>
     </div>
 
     <div class="explain three-col">
@@ -513,21 +579,34 @@ PAGE = r"""
 
     <div class="panel map-wrap">
       <div class="map-top">
-        <h3>City network · watch it grow &amp; pick a route</h3>
+        <h3>Same city map · three algorithms exploring it</h3>
         <button type="button" class="chip" id="mapPrev">◀ smaller</button>
         <button type="button" class="chip on" id="mapPlay">▶ play growth</button>
         <button type="button" class="chip" id="mapNext">bigger ▶</button>
       </div>
-      <div id="cyMap"></div>
+      <div class="map-grid">
+        <div class="map-card">
+          <h4 class="gold">Dijkstra (array)</h4>
+          <div class="cy" id="cyArray"></div>
+        </div>
+        <div class="map-card">
+          <h4 class="blue">Dijkstra (heap)</h4>
+          <div class="cy" id="cyHeap"></div>
+        </div>
+        <div class="map-card">
+          <h4 class="violet">Bellman-Ford</h4>
+          <div class="cy" id="cyBf"></div>
+        </div>
+      </div>
       <div class="map-legend">
         <span><i style="background:#3dd68c"></i>Start</span>
         <span><i style="background:#ff6b6b"></i>Destination</span>
-        <span><span class="swatch" style="background:#3d4f5f"></span>City roads</span>
-        <span><span class="swatch" style="background:#f0c14b"></span>Explored</span>
+        <span><span class="swatch" style="background:#3d4f5f"></span>Same roads</span>
+        <span><span class="swatch" style="background:#f0c14b"></span>Explored by that algo</span>
         <span><span class="swatch" style="background:#4cc9f0"></span>Shortest route</span>
       </div>
-      <p class="legend-note" id="mapCaption">Run a speed test to draw the city network.</p>
-      <p class="lib-credit">Map drawn with <b>Cytoscape.js</b> — popular open-source network visualization library (MIT).</p>
+      <p class="legend-note" id="mapCaption">Run a speed test — all three panels use the identical city network.</p>
+      <p class="lib-credit">Maps drawn with <b>Cytoscape.js</b> (MIT). Same graph, different explore order per algorithm.</p>
     </div>
 
     <div class="three">
@@ -804,8 +883,10 @@ let mapIndex = 0;
 let mapTimer = null;
 let animTimer = null;
 let animStep = 0;
-let cy = null;
-const MAP_W = 900, MAP_H = 560;
+let cyMaps = { array: null, heap: null, bf: null };
+const ALGO_KEYS = ["array", "heap", "bf"];
+const ALGO_BOX = { array: "cyArray", heap: "cyHeap", bf: "cyBf" };
+const MAP_W = 420, MAP_H = 300;
 
 function stopMapPlay(){
   if(mapTimer){ clearInterval(mapTimer); mapTimer = null; }
@@ -823,10 +904,10 @@ function cityElements(m){
       group: "nodes",
       data: {
         id: "n" + n.id,
-        label: m.V <= 36 ? (n.name || ("City " + n.id)) : String(n.id),
+        label: m.V <= 28 ? (n.name || ("City " + n.id)) : String(n.id),
         raw: n.id,
       },
-      position: { x: 40 + n.x * (MAP_W - 80), y: 40 + n.y * (MAP_H - 80) },
+      position: { x: 24 + n.x * (MAP_W - 48), y: 24 + n.y * (MAP_H - 48) },
     });
   });
   m.edges.forEach((e, i) => {
@@ -844,105 +925,89 @@ function cityElements(m){
   return els;
 }
 
-function ensureCy(m){
-  const box = document.getElementById("cyMap");
-  if(cy){ cy.destroy(); cy = null; }
-  cy = cytoscape({
-    container: box,
-    elements: cityElements(m),
-    layout: { name: "preset", fit: true, padding: 28 },
-    minZoom: 0.4,
-    maxZoom: 2.5,
-    wheelSensitivity: 0.25,
-    style: [
-      {
-        selector: "node",
-        style: {
-          "background-color": "#2a3a48",
-          "border-width": 2,
-          "border-color": "#6f8799",
-          "label": "data(label)",
-          "color": "#d7e0e8",
-          "font-size": m.V > 50 ? 0 : 10,
-          "font-family": "IBM Plex Sans, sans-serif",
-          "text-valign": "top",
-          "text-margin-y": -6,
-          "width": m.V > 80 ? 10 : m.V > 40 ? 16 : 22,
-          "height": m.V > 80 ? 10 : m.V > 40 ? 16 : 22,
-          "overlay-opacity": 0,
-        }
-      },
-      {
-        selector: "edge",
-        style: {
-          "width": 1.5,
-          "line-color": "#3d4f5f",
-          "target-arrow-color": "#3d4f5f",
-          "target-arrow-shape": "triangle",
-          "curve-style": "bezier",
-          "arrow-scale": 0.7,
-          "opacity": 0.75,
-        }
-      },
-      {
-        selector: "node.explored",
-        style: { "background-color": "#f0c14b", "border-color": "#ffe08a" }
-      },
-      {
-        selector: "edge.explored",
-        style: { "line-color": "#c9a227", "target-arrow-color": "#c9a227", "width": 2, "opacity": 0.9 }
-      },
-      {
-        selector: "node.path",
-        style: { "background-color": "#4cc9f0", "border-color": "#9be7ff", "width": 26, "height": 26 }
-      },
-      {
-        selector: "edge.path",
-        style: {
-          "line-color": "#4cc9f0",
-          "target-arrow-color": "#4cc9f0",
-          "width": 5,
-          "opacity": 1,
-          "z-index": 99,
-        }
-      },
-      {
-        selector: "node.start",
-        style: {
-          "background-color": "#3dd68c",
-          "border-color": "#b6f5d3",
-          "width": 34, "height": 34,
-          "label": "START",
-          "font-size": 11,
-          "font-weight": 700,
-          "color": "#3dd68c",
-        }
-      },
-      {
-        selector: "node.end",
-        style: {
-          "background-color": "#ff6b6b",
-          "border-color": "#ffc2c2",
-          "width": 34, "height": 34,
-          "label": "END",
-          "font-size": 11,
-          "font-weight": 700,
-          "color": "#ff6b6b",
-        }
-      },
-    ],
+function cyStyle(m){
+  const nsize = m.V > 60 ? 8 : m.V > 35 ? 12 : 18;
+  return [
+    {
+      selector: "node",
+      style: {
+        "background-color": "#2a3a48",
+        "border-width": 2,
+        "border-color": "#6f8799",
+        "label": "data(label)",
+        "color": "#d7e0e8",
+        "font-size": m.V > 40 ? 0 : 9,
+        "font-family": "IBM Plex Sans, sans-serif",
+        "text-valign": "top",
+        "text-margin-y": -4,
+        "width": nsize,
+        "height": nsize,
+        "overlay-opacity": 0,
+      }
+    },
+    {
+      selector: "edge",
+      style: {
+        "width": 1.2,
+        "line-color": "#3d4f5f",
+        "target-arrow-color": "#3d4f5f",
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+        "arrow-scale": 0.6,
+        "opacity": 0.7,
+      }
+    },
+    { selector: "node.explored", style: { "background-color": "#f0c14b", "border-color": "#ffe08a" } },
+    { selector: "edge.explored", style: { "line-color": "#c9a227", "target-arrow-color": "#c9a227", "width": 2, "opacity": 0.9 } },
+    { selector: "node.path", style: { "background-color": "#4cc9f0", "border-color": "#9be7ff", "width": nsize+6, "height": nsize+6 } },
+    { selector: "edge.path", style: { "line-color": "#4cc9f0", "target-arrow-color": "#4cc9f0", "width": 4, "opacity": 1, "z-index": 99 } },
+    {
+      selector: "node.start",
+      style: {
+        "background-color": "#3dd68c", "border-color": "#b6f5d3",
+        "width": nsize+10, "height": nsize+10,
+        "label": "START", "font-size": 9, "font-weight": 700, "color": "#3dd68c",
+      }
+    },
+    {
+      selector: "node.end",
+      style: {
+        "background-color": "#ff6b6b", "border-color": "#ffc2c2",
+        "width": nsize+10, "height": nsize+10,
+        "label": "END", "font-size": 9, "font-weight": 700, "color": "#ff6b6b",
+      }
+    },
+  ];
+}
+
+function ensureAllCy(m){
+  const els = cityElements(m);
+  const style = cyStyle(m);
+  ALGO_KEYS.forEach(key => {
+    if(cyMaps[key]){ cyMaps[key].destroy(); cyMaps[key] = null; }
+    cyMaps[key] = cytoscape({
+      container: document.getElementById(ALGO_BOX[key]),
+      elements: els,
+      layout: { name: "preset", fit: true, padding: 16 },
+      minZoom: 0.35,
+      maxZoom: 2.2,
+      wheelSensitivity: 0.2,
+      style,
+      userZoomingEnabled: true,
+      userPanningEnabled: true,
+    });
   });
 }
 
-function styleProgress(m, exploredCount){
-  if(!cy) return;
-  const explored = new Set((m.visit_order || []).slice(0, exploredCount));
-  const showPath = exploredCount >= (m.visit_order || []).length;
-  const pathSet = new Set(m.path || []);
+function styleOne(cy, m, algoKey, exploredCount){
+  if(!cy || !m.algos || !m.algos[algoKey]) return;
+  const order = m.algos[algoKey].visit_order || [];
+  const path = m.algos[algoKey].path || m.path || [];
+  const explored = new Set(order.slice(0, exploredCount));
+  const showPath = exploredCount >= order.length;
+  const pathSet = new Set(path);
   const pathEdges = new Set();
-  for(let i=1;i<(m.path||[]).length;i++){
-    pathEdges.add(m.path[i-1] + ">" + m.path[i]);
-  }
+  for(let i=1;i<path.length;i++) pathEdges.add(path[i-1] + ">" + path[i]);
 
   cy.batch(() => {
     cy.nodes().forEach(n => {
@@ -962,33 +1027,40 @@ function styleProgress(m, exploredCount){
       else if(explored.has(u) && explored.has(v)) e.addClass("explored");
     });
   });
+}
 
+function styleAll(m, frac){
+  // frac 0..1 progress; each algo may have different order lengths
+  ALGO_KEYS.forEach(key => {
+    const order = (m.algos && m.algos[key] && m.algos[key].visit_order) || [];
+    const count = Math.floor(frac * order.length);
+    styleOne(cyMaps[key], m, key, count);
+  });
   const hops = Math.max(0, (m.path||[]).length - 1);
   const startName = (m.nodes.find(n => n.id === m.source) || {}).name || ("City " + m.source);
   const endName = (m.nodes.find(n => n.id === m.target) || {}).name || ("City " + m.target);
+  const done = frac >= 1;
   document.getElementById("mapCaption").innerHTML =
-    `<b>${m.V}</b> junctions · <b>${m.E}</b> one-way roads · ` +
+    `Same map on all three · <b>${m.V}</b> junctions · <b>${m.E}</b> roads · ` +
     `<b>${startName}</b> → <b>${endName}</b> · ` +
-    (m.dist==null ? "unreachable" : `travel cost <b>${m.dist}</b> · <b>${hops}</b> hops`) +
-    (showPath ? " · cyan = shortest route" : " · exploring the city…");
+    (m.dist==null ? "unreachable" : `cost <b>${m.dist}</b> · <b>${hops}</b> hops`) +
+    (done
+      ? " · final cyan routes should match (positive weights)"
+      : " · gold shows each algorithm’s explore order");
 }
 
 function playExplore(m){
   stopAnim();
-  ensureCy(m);
+  ensureAllCy(m);
   animStep = 0;
-  const total = (m.visit_order || []).length;
-  const stepEvery = Math.max(20, Math.min(90, 1600 / Math.max(1,total)));
-  styleProgress(m, 0);
+  const frames = 42;
+  const stepEvery = 40;
+  styleAll(m, 0);
   animTimer = setInterval(() => {
-    animStep += Math.max(1, Math.floor(total / 35));
-    if(animStep >= total){
-      animStep = total;
-      styleProgress(m, animStep);
-      stopAnim();
-      return;
-    }
-    styleProgress(m, animStep);
+    animStep += 1;
+    const frac = Math.min(1, animStep / frames);
+    styleAll(m, frac);
+    if(frac >= 1) stopAnim();
   }, stepEvery);
 }
 
@@ -999,8 +1071,8 @@ function showMapAt(i, animate=true){
   if(animate) playExplore(m);
   else {
     stopAnim();
-    ensureCy(m);
-    styleProgress(m, (m.visit_order||[]).length);
+    ensureAllCy(m);
+    styleAll(m, 1);
   }
 }
 
